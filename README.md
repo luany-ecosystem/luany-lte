@@ -347,7 +347,6 @@ $engine->getCompiler()->directive('datetime', function ($args) {
 
 ## VS Code Extension
 
-First-class `.lte` file support on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=NgolaProgramador.luany-lte-vscode).
 First-class `.lte` file support on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=luany.luany-lte).
 
 ---
