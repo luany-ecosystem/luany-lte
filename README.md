@@ -197,10 +197,12 @@ Supported option: `defer`
 
 ## Stack Directives (v0.2)
 
-Push content into named stacks from any view or component. Multiple pushes to the same stack accumulate — they never overwrite each other.
+Push content into named stacks from **page views**. Multiple pushes to the same stack accumulate — they never overwrite each other.
+
+> **Important:** `@push` has no deduplication — if used inside a component that is `@include`'d multiple times, the content will appear multiple times. Use `@style` / `@script` inside components instead — they deduplicate automatically.
 
 ```lte
-{{-- in any view or component --}}
+{{-- in a page view --}}
 @push('head')
     <meta name="description" content="My page">
 @endpush
