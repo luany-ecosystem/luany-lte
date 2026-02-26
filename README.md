@@ -353,6 +353,13 @@ First-class `.lte` file support on the [VS Code Marketplace](https://marketplace
 
 ## Changelog
 
+### v0.2.1
+- `@forelse` / `@empty` / `@endforelse` — loop with empty state (was documented but not implemented)
+- Scope isolation in `Engine::evaluate()` — `$path` and `$data` no longer leak into included views
+- `ob_get_level()` safety in `SectionStack` — prevents buffer corruption on orphan `@endsection`
+- 96 unit tests — `ParserTest`, `CompilerTest`, `EngineTest` covering the full pipeline
+- `phpunit.xml` configuration added
+
 ### v0.2.0
 - `AssetStack` — inline CSS/JS with automatic deduplication by content hash
 - `@style` / `@endstyle` — inline style blocks (page-level and component-level)
