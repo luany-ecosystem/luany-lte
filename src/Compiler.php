@@ -25,7 +25,35 @@ namespace Luany\Lte;
  *     → <?php echo \Luany\Lte\SectionStack::get('content'); ?>
  *
  *   @include('components.navbar')
- *     → <?php echo view('components.navbar', [...vars...]); ?>
+ *     → <?php echo $__engine->render('components.navbar', [...vars...]); ?>
+ *
+ *   — Asset directives (v0.2) ————————————————————————————————————————
+ *
+ *   @style / @endstyle
+ *     → Captures inline CSS block → AssetStack
+ *
+ *   @style(scoped) / @endstyle
+ *     → Scoped CSS block (reserved for v0.3)
+ *
+ *   @script / @endscript
+ *     → Captures inline JS block → AssetStack
+ *
+ *   @script(defer) / @endscript
+ *     → Deferred inline JS block
+ *
+ *   @styles
+ *     → <?php echo \Luany\Lte\AssetStack::renderStyles(); ?>
+ *
+ *   @scripts
+ *     → <?php echo \Luany\Lte\AssetStack::renderScripts(); ?>
+ *
+ *   — Stack directives (v0.2) ————————————————————————————————————————
+ *
+ *   @push('head') / @endpush
+ *     → Pushes content into a named stack (accumulative)
+ *
+ *   @stack('head')
+ *     → Renders all content pushed to that stack
  */
 class Compiler
 {
@@ -54,7 +82,7 @@ class Compiler
             case 'text':
                 return $node['content'];
             case 'echo':
-                return "<?php echo e({$node['expression']}); ?>";
+                return "<?php echo htmlspecialchars((string)({$node['expression']} ?? ''), ENT_QUOTES, 'UTF-8'); ?>";
             case 'raw_echo':
                 return "<?php echo {$node['expression']}; ?>";
             case 'directive':
@@ -99,7 +127,8 @@ class Compiler
 
             // Security
             case 'csrf':
-                return '<input type="hidden" name="csrf_token" value="<?php echo generateCsrfToken(); ?>">';
+                // CSRF token — uses session directly, no external helper required
+                return '<input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars((string)(isset($_SESSION[\'csrf_token\']) ? $_SESSION[\'csrf_token\'] : (($_SESSION[\'csrf_token\'] = bin2hex(random_bytes(32))))) , ENT_QUOTES, \'UTF-8\'); ?>">';
             case 'method':
                 $m = strtoupper(trim($args, '\'"'));
                 return "<input type=\"hidden\" name=\"_method\" value=\"{$m}\">";
@@ -138,10 +167,59 @@ class Compiler
                 $default     = $yieldArgs[1] ?? "''";
                 return "<?php echo \\Luany\\Lte\\SectionStack::get('{$sectionName}', {$default}); ?>";
 
-            // Include — delegates to view() helper (supports .lte + .php)
+            // Include — delegates to $__engine->render() — zero external dependencies
             case 'include':
-                $viewName = trim($args, '\'"');
-                return "<?php echo view('{$viewName}', array_filter(get_defined_vars(), function(\$k) { return !str_starts_with(\$k, '__'); }, ARRAY_FILTER_USE_KEY)); ?>";
+                // Supports both forms:
+                //   @include('view.name')
+                //   @include('view.name', ['key' => 'value'])
+                //
+                // Uses character-by-character parsing (zero regex — identity preserved).
+                // Reuses hasInlineValue() + parseSectionArgs() already in this Compiler.
+                $parentVars = "array_filter(get_defined_vars(), function(\$k) { return !str_starts_with(\$k, '__'); }, ARRAY_FILTER_USE_KEY)";
+
+                if ($args !== null && $this->hasInlineValue($args)) {
+                    [$rawView, $extraData] = $this->parseSectionArgs($args);
+                    $viewName = trim($rawView, '\'"');
+                    $data     = "array_merge({$parentVars}, {$extraData})";
+                } else {
+                    $viewName = trim((string) $args, '\'"');
+                    $data     = $parentVars;
+                }
+
+                return "<?php echo \$__engine->render('{$viewName}', {$data}); ?>";
+
+                        // ── Asset directives (v0.2) ────────────────────────────────────────
+
+            case 'style':
+                return '<?php \Luany\Lte\AssetStack::startStyle(' . $this->parseArgs($args) . '); ?>';
+
+            case 'endstyle':
+                return '<?php \Luany\Lte\AssetStack::endStyle(); ?>';
+
+            case 'script':
+                return '<?php \Luany\Lte\AssetStack::startScript(' . $this->parseArgs($args) . '); ?>';
+
+            case 'endscript':
+                return '<?php \Luany\Lte\AssetStack::endScript(); ?>';
+
+            case 'styles':
+                return '<?php echo \Luany\Lte\AssetStack::renderStyles(); ?>';
+
+            case 'scripts':
+                return '<?php echo \Luany\Lte\AssetStack::renderScripts(); ?>';
+
+            // ── Stack directives (v0.2) ────────────────────────────────────────
+
+            case 'push':
+                $stackName = trim($args, '\'"');
+                return "<?php \Luany\Lte\SectionStack::startPush('{$stackName}'); ?>";
+
+            case 'endpush':
+                return '<?php \Luany\Lte\SectionStack::endPush(); ?>';
+
+            case 'stack':
+                $stackName = trim($args, '\'"');
+                return "<?php echo \Luany\Lte\SectionStack::getStack('{$stackName}'); ?>";
 
             default:
                 return "@{$name}" . ($args !== null ? "({$args})" : '');
@@ -149,6 +227,52 @@ class Compiler
     }
 
     // ── Argument parsing helpers ───────────────────────────────────────────────
+
+    /**
+     * Parse directive args into a PHP array literal for AssetStack calls.
+     *
+     * @style(defer, scoped)  →  ['defer','scoped']
+     * @style                 →  []
+     *
+     * Uses character-by-character parsing to handle quoted strings with commas.
+     */
+    private function parseArgs(?string $args): string
+    {
+        if ($args === null || trim($args) === '') {
+            return '[]';
+        }
+
+        $args  = trim($args, '() ');
+        $parts = [];
+        $token = '';
+        $inS   = false;
+        $inD   = false;
+
+        for ($i = 0, $len = strlen($args); $i < $len; $i++) {
+            $ch = $args[$i];
+
+            if ($ch === "'" && !$inD) { $inS = !$inS; $token .= $ch; continue; }
+            if ($ch === '"' && !$inS) { $inD = !$inD; $token .= $ch; continue; }
+
+            if ($ch === ',' && !$inS && !$inD) {
+                $parts[] = trim($token, '\'" ');
+                $token   = '';
+                continue;
+            }
+
+            $token .= $ch;
+        }
+
+        if (trim($token) !== '') {
+            $parts[] = trim($token, '\'" ');
+        }
+
+        if (empty($parts)) {
+            return '[]';
+        }
+
+        return '[' . implode(',', array_map(fn($p) => "'{$p}'", $parts)) . ']';
+    }
 
     private function hasInlineValue(string $args): bool
     {

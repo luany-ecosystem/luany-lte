@@ -6,9 +6,9 @@ namespace Luany\Lte;
  * LTE Engine — Orchestrator
  *
  * Render flow:
- *   1. SectionStack::reset()
- *   2. Compile + evaluate child view  (populates sections, sets layout)
- *   3. If @extends was used → compile + evaluate layout (consumes sections)
+ *   1. SectionStack::reset() + AssetStack::reset()
+ *   2. Compile + evaluate child view  (populates sections/assets, sets layout)
+ *   3. If @extends was used → compile + evaluate layout (consumes sections, renders assets)
  *   4. Return final HTML string
  */
 class Engine
@@ -52,6 +52,7 @@ class Engine
 
         if ($isRoot) {
             SectionStack::reset();
+            AssetStack::reset();
         }
 
         self::$renderDepth++;
@@ -164,6 +165,9 @@ class Engine
      */
     private function evaluate(string $path, array $data): string
     {
+        // Inject engine reference so @include can call $__engine->render() directly.
+        // Prefixed with __ so it is filtered out of child view data automatically.
+        $data['__engine'] = $this;
         extract($data, EXTR_SKIP);
         ob_start();
         try {

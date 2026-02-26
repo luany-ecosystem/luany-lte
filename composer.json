@@ -3,7 +3,23 @@
     "description": "LTE — AST-based template engine for PHP. Compiler-grade templating with zero regex parsing.",
     "type": "library",
     "license": "MIT",
-    "keywords": ["php", "template", "engine", "ast", "compiler", "lte", "luany"],
+    "authors": [
+        {
+            "name": "António Ambrósio Ngola",
+            "email": "antoniongola.dev@gmail.com",
+            "homepage": "https://github.com/luany-ecosystem",
+            "role": "Lead Engineer"
+        }
+    ],
+    "keywords": [
+        "php",
+        "template",
+        "engine",
+        "ast",
+        "compiler",
+        "lte",
+        "luany"
+    ],
     "homepage": "https://github.com/luany-ecosystem/luany-lte",
     "require": {
         "php": ">=8.1"
