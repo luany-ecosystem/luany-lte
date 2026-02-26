@@ -42,10 +42,9 @@ class Engine
     /**
      * Render a view and return the final HTML string.
      *
-     * @param string $view  Dot-notation view name  (e.g. 'pages.home')
+     * @param string $view  Dot-notation view name (e.g. 'pages.home')
      * @param array  $data  Variables to pass into the view
      */
-
     public function render(string $view, array $data = []): string
     {
         $isRoot = (self::$renderDepth === 0);
@@ -70,7 +69,7 @@ class Engine
 
             $output = $this->evaluate($cachedPath, $data);
 
-            // Só o render raiz resolve layouts
+            // Only the root render resolves layouts
             if ($isRoot) {
                 $layout = SectionStack::getLayout();
                 if ($layout !== null) {
@@ -94,7 +93,7 @@ class Engine
     }
 
     /**
-     * Access the compiler (for registering custom directives)
+     * Access the compiler (for registering custom directives).
      */
     public function getCompiler(): Compiler
     {
@@ -102,7 +101,7 @@ class Engine
     }
 
     /**
-     * Clear all cached compiled views
+     * Clear all cached compiled views.
      */
     public function clearCache(): void
     {
@@ -162,16 +161,33 @@ class Engine
 
     /**
      * Execute compiled PHP file in isolated scope, return output as string.
+     *
+     * Scope isolation — variables visible inside the compiled view:
+     *   - All keys from $data (user-supplied variables)        ✅
+     *   - $__engine (filtered by __ prefix in @include)        ✅
+     *   - $__lte_path (replaces $path — stays internal)        ✅
+     *
+     * Variables intentionally removed before require:
+     *   - $data  → unset() — prevents leaking the raw array
+     *   - $path  → renamed to $__lte_path, then unset()
+     *     Both would otherwise appear in get_defined_vars() inside
+     *     the compiled view and leak into @include children.
      */
     private function evaluate(string $path, array $data): string
     {
-        // Inject engine reference so @include can call $__engine->render() directly.
-        // Prefixed with __ so it is filtered out of child view data automatically.
         $data['__engine'] = $this;
         extract($data, EXTR_SKIP);
+
+        // Remove $data and $path from scope before executing the view.
+        // Without this, get_defined_vars() inside the compiled template
+        // would expose these internal variables to @include children.
+        unset($data);
+        $__lte_path = $path;
+        unset($path);
+
         ob_start();
         try {
-            require $path;
+            require $__lte_path;
         } catch (\Throwable $e) {
             ob_end_clean();
             throw $e;

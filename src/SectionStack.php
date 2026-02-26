@@ -73,11 +73,18 @@ class SectionStack
 
     /**
      * End current block section and store its content.
+     *
+     * Safety: checks ob_get_level() before calling ob_end_clean() on the
+     * orphan path — prevents accidentally popping a foreign output buffer
+     * when @endsection is called without a matching @section.
      */
     public static function end(): void
     {
         if (self::$currentSection === null) {
-            ob_end_clean();
+            // Orphan @endsection — only clean a buffer if one is open.
+            if (ob_get_level() > 0) {
+                ob_end_clean();
+            }
             return;
         }
 
@@ -128,11 +135,17 @@ class SectionStack
 
     /**
      * End push capture and append content to the named stack.
+     *
+     * Safety: checks ob_get_level() before ob_end_clean() on the
+     * orphan path — same rationale as SectionStack::end().
      */
     public static function endPush(): void
     {
         if (self::$currentStack === null) {
-            ob_end_clean();
+            // Orphan @endpush — only clean a buffer if one is open.
+            if (ob_get_level() > 0) {
+                ob_end_clean();
+            }
             return;
         }
 
