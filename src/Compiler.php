@@ -85,6 +85,8 @@ class Compiler
                 return "<?php echo htmlspecialchars((string)({$node['expression']} ?? ''), ENT_QUOTES, 'UTF-8'); ?>";
             case 'raw_echo':
                 return "<?php echo {$node['expression']}; ?>";
+            case 'php_block':
+                return "<?php\n{$node['content']}\n?>";    
             case 'directive':
                 return $this->compileDirective($node);
             default:
@@ -261,6 +263,27 @@ class Compiler
             case 'stack':
                 $stackName = trim($args, '\'"');
                 return "<?php echo \Luany\Lte\SectionStack::getStack('{$stackName}'); ?>";
+
+            // ── Debug helpers ─────────────────────────────────────────────────────────
+            case 'dump':
+                return "<?php var_dump({$args}); ?>";
+
+            case 'dd':
+                return "<?php var_dump({$args}); die; ?>";
+
+            // ── @isset / @endisset ────────────────────────────────────────────────────
+            case 'isset':
+                return "<?php if(isset({$args})): ?>";
+
+            case 'endisset':
+                return '<?php endif; ?>';
+
+            // ── @ifempty / @endifempty ────────────────────────────────────────────────
+            case 'ifempty':
+                return "<?php if(empty({$args})): ?>";
+
+            case 'endifempty':
+                return '<?php endif; ?>';
 
             default:
                 return "@{$name}" . ($args !== null ? "({$args})" : '');

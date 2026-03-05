@@ -75,7 +75,7 @@ class Parser
     {
         $end = strpos($this->source, '--}}', $this->position);
         if ($end === false) {
-            throw new \Exception('Unclosed comment');
+            throw new \RuntimeException('Unclosed comment');
         }
         
         $this->position = $end + 4;
@@ -89,7 +89,7 @@ class Parser
     {
         $end = strpos($this->source, '}}', $this->position);
         if ($end === false) {
-            throw new \Exception('Unclosed echo tag');
+            throw new \RuntimeException('Unclosed echo tag');
         }
         
         $expression = trim(substr($this->source, $this->position, $end - $this->position));
@@ -108,7 +108,7 @@ class Parser
     {
         $end = strpos($this->source, '!!}', $this->position);
         if ($end === false) {
-            throw new \Exception('Unclosed raw echo tag');
+            throw new \RuntimeException('Unclosed raw echo tag');
         }
         
         $expression = trim(substr($this->source, $this->position, $end - $this->position));
@@ -121,31 +121,42 @@ class Parser
     }
     
     /**
-     * Parse directive @name(args)
+     * Parse LTE directive starting with '@'.
+     *
+     * Handles:
+     *  - Standard directives (@name(args))
+     *  - PHP blocks (@php ... @endphp)
      */
     private function parseDirective(): array
     {
-        // Get directive name
         $nameEnd = $this->position;
-        while ($nameEnd < $this->length && 
-               (ctype_alnum($this->source[$nameEnd]) || $this->source[$nameEnd] === '_')) {
+        while ($nameEnd < $this->length &&
+            (ctype_alnum($this->source[$nameEnd]) || $this->source[$nameEnd] === '_')) {
             $nameEnd++;
         }
-        
+
         $name = substr($this->source, $this->position, $nameEnd - $this->position);
         $this->position = $nameEnd;
-        
-        // Check for arguments
+
+        // @php block (no parens) — consume raw PHP until @endphp
+        // Never parse LTE directives inside — prevents @csrf, {{ }}, {!! !!} from
+        // being processed inside PHP strings or expressions
+        if ($name === 'php' && ($this->position >= $this->length || $this->source[$this->position] !== '(')) {
+            $end = strpos($this->source, '@endphp', $this->position);
+            if ($end === false) {
+                throw new \RuntimeException('Unclosed @php block — missing @endphp');
+            }
+            $content = substr($this->source, $this->position, $end - $this->position);
+            $this->position = $end + strlen('@endphp');
+            return ['type' => 'php_block', 'content' => $content];
+        }
+
         $args = null;
         if ($this->position < $this->length && $this->source[$this->position] === '(') {
             $args = $this->parseDirectiveArgs();
         }
-        
-        return [
-            'type' => 'directive',
-            'name' => $name,
-            'args' => $args
-        ];
+
+        return ['type' => 'directive', 'name' => $name, 'args' => $args];
     }
     
     /**
@@ -175,7 +186,7 @@ class Parser
         }
         
         if ($depth !== 0) {
-            throw new \Exception('Unclosed directive arguments');
+            throw new \RuntimeException('Unclosed directive arguments');
         }
         
         return trim(substr($this->source, $start, $this->position - $start - 1));

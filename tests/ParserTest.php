@@ -164,19 +164,72 @@ class ParserTest extends TestCase
 
     public function test_unclosed_echo_throws_exception(): void
     {
-        $this->expectException(\Exception::class);
+        $this->expectException(\RuntimeException::class);
         $this->parser->parse('{{ $unclosed');
     }
 
     public function test_unclosed_comment_throws_exception(): void
     {
-        $this->expectException(\Exception::class);
+        $this->expectException(\RuntimeException::class);
         $this->parser->parse('{{-- unclosed');
     }
 
     public function test_unclosed_raw_echo_throws_exception(): void
     {
-        $this->expectException(\Exception::class);
+        $this->expectException(\RuntimeException::class);
         $this->parser->parse('{!! $unclosed');
+    }
+
+    // ── @php block ────────────────────────────────────────────────────────────
+
+    public function test_php_block_produces_php_block_node(): void
+    {
+        $ast = $this->parser->parse("@php\n\$x = 1;\n@endphp");
+        $phpNodes = array_values(array_filter($ast, fn($n) => $n['type'] === 'php_block'));
+        $this->assertCount(1, $phpNodes);
+        $this->assertStringContainsString('$x = 1;', $phpNodes[0]['content']);
+    }
+
+    public function test_php_block_does_not_parse_directives_inside(): void
+    {
+        $ast = $this->parser->parse("@php\n\$a = '@csrf';\n@endphp");
+        $phpNodes = array_values(array_filter($ast, fn($n) => $n['type'] === 'php_block'));
+        $dirNodes = array_values(array_filter($ast, fn($n) => $n['type'] === 'directive'));
+        $this->assertCount(1, $phpNodes);
+        $this->assertCount(0, $dirNodes);
+    }
+
+    public function test_php_block_does_not_parse_echo_inside(): void
+    {
+        $ast = $this->parser->parse("@php\n\$a = '{{ not_echo }}';\n@endphp");
+        $phpNodes = array_values(array_filter($ast, fn($n) => $n['type'] === 'php_block'));
+        $echoNodes = array_values(array_filter($ast, fn($n) => $n['type'] === 'echo'));
+        $this->assertCount(1, $phpNodes);
+        $this->assertCount(0, $echoNodes);
+    }
+
+    public function test_php_block_does_not_parse_raw_echo_inside(): void
+    {
+        $ast = $this->parser->parse("@php\n\$html = '{!! \$x !!}';\n@endphp");
+        $phpNodes = array_values(array_filter($ast, fn($n) => $n['type'] === 'php_block'));
+        $rawNodes = array_values(array_filter($ast, fn($n) => $n['type'] === 'raw_echo'));
+        $this->assertCount(1, $phpNodes);
+        $this->assertCount(0, $rawNodes);
+    }
+
+    public function test_php_inline_still_works(): void
+    {
+        $ast = $this->parser->parse('@php($x = 1)');
+        $dirNodes = array_values(array_filter($ast, fn($n) => $n['type'] === 'directive'));
+        $this->assertCount(1, $dirNodes);
+        $this->assertSame('php', $dirNodes[0]['name']);
+        $this->assertSame('$x = 1', $dirNodes[0]['args']);
+    }
+
+    public function test_unclosed_php_block_throws(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/Unclosed @php block/');
+        $this->parser->parse("@php\n\$x = 1;");
     }
 }

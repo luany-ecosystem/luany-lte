@@ -355,4 +355,60 @@ class CompilerTest extends TestCase
         $this->assertStringContainsString("date('d/m/Y'", $out);
         $this->assertStringContainsString('$post->created_at', $out);
     }
+
+    // ── Debug helpers ─────────────────────────────────────────────────────────
+
+    public function test_dump_directive(): void
+    {
+        $output = $this->compiler->compile([
+            ['type' => 'directive', 'name' => 'dump', 'args' => '$user']
+        ]);
+        $this->assertStringContainsString('var_dump($user)', $output);
+    }
+
+    public function test_dd_directive(): void
+    {
+        $output = $this->compiler->compile([
+            ['type' => 'directive', 'name' => 'dd', 'args' => '$user']
+        ]);
+        $this->assertStringContainsString('var_dump($user)', $output);
+        $this->assertStringContainsString('die', $output);
+    }
+
+    // ── @isset / @endisset ────────────────────────────────────────────────────
+
+    public function test_isset_directive(): void
+    {
+        $output = $this->compiler->compile([
+            ['type' => 'directive', 'name' => 'isset', 'args' => '$user']
+        ]);
+        $this->assertStringContainsString('isset($user)', $output);
+    }
+
+    public function test_endisset_directive(): void
+    {
+        $output = $this->compiler->compile([
+            ['type' => 'directive', 'name' => 'endisset', 'args' => null]
+        ]);
+        $this->assertStringContainsString('endif', $output);
+    }
+
+    // ── @ifempty / @endifempty ────────────────────────────────────────────────
+
+    public function test_ifempty_directive(): void
+    {
+        $output = $this->compiler->compile([
+            ['type' => 'directive', 'name' => 'ifempty', 'args' => '$items']
+        ]);
+        $this->assertStringContainsString('empty($items)', $output);
+    }
+
+    public function test_endifempty_directive(): void
+    {
+        $output = $this->compiler->compile([
+            ['type' => 'directive', 'name' => 'endifempty', 'args' => null]
+        ]);
+        $this->assertStringContainsString('endif', $output);
+    }
+
 }

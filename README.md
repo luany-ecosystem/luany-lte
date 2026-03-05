@@ -330,6 +330,10 @@ Layout (layouts/main.lte)
 | `@scripts` | Render accumulated scripts (v0.2) |
 | `@push` / `@endpush` | Push to named stack (v0.2) |
 | `@stack` | Render named stack (v0.2) |
+| `@dump($var)` | Debug — var_dump (v0.2.2) |
+| `@dd($var)` | Debug — var_dump + die (v0.2.2) |
+| `@isset($var)` / `@endisset` | Conditional on isset() (v0.2.2) |
+| `@ifempty($var)` / `@endifempty` | Conditional on empty() (v0.2.2) |
 
 ---
 
@@ -354,6 +358,15 @@ First-class `.lte` file support on the [VS Code Marketplace](https://marketplace
 ---
 
 ## Changelog
+
+### v0.2.2
+- `@php` block now treats content as opaque raw PHP — LTE directives, `{{ }}`, and `{!! !!}` are never parsed inside `@php` / `@endphp` blocks
+- Parser exceptions changed from `\Exception` to `\RuntimeException`
+- `@dump($var)` — compiles to `var_dump($var)`
+- `@dd($var)` — compiles to `var_dump($var); die`
+- `@isset($var)` / `@endisset` — conditional on `isset()`
+- `@ifempty($var)` / `@endifempty` — conditional on `empty()`, no conflict with `@forelse @empty`
+- 108 tests, 170 assertions
 
 ### v0.2.1
 - `@forelse` / `@empty` / `@endforelse` — loop with empty state (was documented but not implemented)
