@@ -7,55 +7,25 @@ namespace Luany\Lte;
  *
  * Compiles AST nodes produced by Parser into executable PHP code.
  *
- * Key directives and their compiled output:
+ * Phase 5 additions:
  *
- *   @extends('layouts.main')
- *     → <?php \Luany\Lte\SectionStack::setLayout('layouts.main'); ?>
+ *   @json($data)                     — safe JSON output (HTML-entity encoded)
+ *   @json($data, JSON_PRETTY_PRINT)  — with custom flags (OR-ed with safe defaults)
  *
- *   @section('title', 'My Page')
- *     → <?php \Luany\Lte\SectionStack::set('title', 'My Page'); ?>
+ *   @class(['base', 'active' => $isActive, 'disabled' => !$on])
+ *     → runtime evaluation via ClassHelper::compile()
  *
- *   @section('content')
- *     → <?php \Luany\Lte\SectionStack::start('content'); ?>
+ *   @component('view', ['key' => 'val']) / @slot('name') / @endslot / @endcomponent
+ *     → ComponentStack-based nested rendering with named slots
  *
- *   @endsection
- *     → <?php \Luany\Lte\SectionStack::end(); ?>
- *
- *   @yield('content')
- *     → <?php echo \Luany\Lte\SectionStack::get('content'); ?>
- *
- *   @include('components.navbar')
- *     → <?php echo $__engine->render('components.navbar', [...vars...]); ?>
- *
- *   @forelse($items as $item) / @empty / @endforelse
- *     → foreach with empty-state fallback via $__lte_fe{n} temp variable
- *
- *   — Asset directives (v0.2) ————————————————————————————————————————
- *
- *   @style / @endstyle      → Captures inline CSS block → AssetStack
- *   @script / @endscript    → Captures inline JS block  → AssetStack
- *   @styles                 → Renders accumulated styles
- *   @scripts                → Renders accumulated scripts
- *
- *   — Stack directives (v0.2) ————————————————————————————————————————
- *
- *   @push('head') / @endpush   → Pushes content into a named stack
- *   @stack('head')             → Renders named stack
- *
- *   — @php usage ————————————————————————————————————————————————————
- *
- *   Inline (no @endphp):   @php($x = 1)  →  <?php $x = 1; ?>
- *   Block  (needs @endphp): @php ... @endphp
+ * Line-number embedding:
+ *   Every compiled node starts with a PHP comment `<?php /* @lte:{LINE} *\/ ?>` so that
+ *   the Engine can map PHP runtime errors back to the originating .lte source line.
  */
 class Compiler
 {
-    private array $directives = [];
-
-    /**
-     * Counter for unique @forelse variable names.
-     * Incremented per @forelse so nested @forelse loops never collide.
-     */
-    private int $forelseDepth = 0;
+    private array $directives  = [];
+    private int   $forelseDepth = 0;
 
     public function __construct()
     {
@@ -63,7 +33,7 @@ class Compiler
     }
 
     /**
-     * Compile AST to PHP.
+     * Compile an AST into a PHP string.
      */
     public function compile(array $ast): string
     {
@@ -78,17 +48,27 @@ class Compiler
 
     private function compileNode(array $node): string
     {
+        $line   = $node['line'] ?? null;
+        $marker = ($line !== null) ? "<?php /* @lte:{$line} */ ?>" : '';
+
         switch ($node['type']) {
             case 'text':
-                return $node['content'];
+                // Text nodes: emit the line marker only if there is actual content
+                return $marker . $node['content'];
+
             case 'echo':
-                return "<?php echo htmlspecialchars((string)({$node['expression']} ?? ''), ENT_QUOTES, 'UTF-8'); ?>";
+                return $marker
+                    . "<?php echo htmlspecialchars((string)({$node['expression']} ?? ''), ENT_QUOTES, 'UTF-8'); ?>";
+
             case 'raw_echo':
-                return "<?php echo {$node['expression']}; ?>";
+                return $marker . "<?php echo {$node['expression']}; ?>";
+
             case 'php_block':
-                return "<?php\n{$node['content']}\n?>";    
+                return $marker . "<?php\n{$node['content']}\n?>";
+
             case 'directive':
-                return $this->compileDirective($node);
+                return $marker . $this->compileDirective($node);
+
             default:
                 return '';
         }
@@ -122,19 +102,6 @@ class Compiler
             case 'endwhile':   return '<?php endwhile; ?>';
 
             // ── @forelse / @empty / @endforelse ───────────────────────────────
-            //
-            // Compiled output for @forelse($users as $user):
-            //
-            //   [php] $__lte_fe1 = $users; if (!empty($__lte_fe1)): [/php]
-            //   [php] foreach ($__lte_fe1 as $user): [/php]
-            //     ... loop body ...
-            //   [php] endforeach; [/php][php] else: [/php]
-            //     ... @empty body ...
-            //   [php] endif; [/php]
-            //
-            // The $forelseDepth counter ensures nested @forelse directives
-            // each get a unique temp variable (__lte_fe1, __lte_fe2, ...).
-
             case 'forelse':
                 $this->forelseDepth++;
                 $tmp = '__lte_fe' . $this->forelseDepth;
@@ -151,8 +118,6 @@ class Compiler
                      . "<?php foreach (\${$tmp} as {$asVar}): ?>";
 
             case 'empty':
-                // Split into two separate PHP tags so that the token 'else:'
-                // never appears bare inside a switch block (PHP parser edge case).
                 return '<?php endforeach; ?>' . '<?php else: ?>';
 
             case 'endforelse':
@@ -160,11 +125,6 @@ class Compiler
                 return '<?php endif; ?>';
 
             // ── Inline PHP ────────────────────────────────────────────────────
-            //
-            // Two distinct forms — must NOT be mixed:
-            //   Inline:  @php($x = 1)   → self-closing, no @endphp
-            //   Block:   @php / @endphp → opens/closes raw PHP block
-            //
             case 'php':
                 return $args !== null ? "<?php {$args}; ?>" : '<?php ';
             case 'endphp':
@@ -183,14 +143,10 @@ class Compiler
                 return "<input type=\"hidden\" name=\"_method\" value=\"{$m}\">";
 
             // ── Auth guards ───────────────────────────────────────────────────
-            case 'auth':
-                return "<?php if(isset(\$_SESSION['user_id'])): ?>";
-            case 'endauth':
-                return '<?php endif; ?>';
-            case 'guest':
-                return "<?php if(!isset(\$_SESSION['user_id'])): ?>";
-            case 'endguest':
-                return '<?php endif; ?>';
+            case 'auth':    return "<?php if(isset(\$_SESSION['user_id'])): ?>";
+            case 'endauth': return '<?php endif; ?>';
+            case 'guest':   return "<?php if(!isset(\$_SESSION['user_id'])): ?>";
+            case 'endguest':return '<?php endif; ?>';
 
             // ── Layout system ─────────────────────────────────────────────────
             case 'extends':
@@ -233,55 +189,119 @@ class Compiler
 
                 return "<?php echo \$__engine->render('{$viewName}', {$data}); ?>";
 
-            // ── Asset directives (v0.2) ───────────────────────────────────────
+            // ── Asset directives ──────────────────────────────────────────────
             case 'style':
                 return '<?php \Luany\Lte\AssetStack::startStyle(' . $this->parseArgs($args) . '); ?>';
-
             case 'endstyle':
                 return '<?php \Luany\Lte\AssetStack::endStyle(); ?>';
-
             case 'script':
                 return '<?php \Luany\Lte\AssetStack::startScript(' . $this->parseArgs($args) . '); ?>';
-
             case 'endscript':
                 return '<?php \Luany\Lte\AssetStack::endScript(); ?>';
-
             case 'styles':
                 return '<?php echo \Luany\Lte\AssetStack::renderStyles(); ?>';
-
             case 'scripts':
                 return '<?php echo \Luany\Lte\AssetStack::renderScripts(); ?>';
 
-            // ── Stack directives (v0.2) ───────────────────────────────────────
+            // ── Stack directives ──────────────────────────────────────────────
             case 'push':
                 $stackName = trim($args, '\'"');
                 return "<?php \Luany\Lte\SectionStack::startPush('{$stackName}'); ?>";
-
             case 'endpush':
                 return '<?php \Luany\Lte\SectionStack::endPush(); ?>';
-
             case 'stack':
                 $stackName = trim($args, '\'"');
                 return "<?php echo \Luany\Lte\SectionStack::getStack('{$stackName}'); ?>";
 
-            // ── Debug helpers ─────────────────────────────────────────────────────────
+            // ── @json (Phase 5) ───────────────────────────────────────────────
+            //
+            // Outputs PHP data as safe JSON for use in JavaScript contexts.
+            //
+            // HTML-entity encoding flags are always applied to prevent XSS when
+            // the JSON is embedded inline in a page:
+            //   JSON_HEX_TAG    — encode < and > as \u003C / \u003E
+            //   JSON_HEX_AMP    — encode & as \u0026
+            //   JSON_HEX_APOS   — encode ' as \u0027
+            //   JSON_HEX_QUOT   — encode " as \u0022
+            //   JSON_UNESCAPED_UNICODE — keep Unicode chars readable
+            //
+            // Usage:
+            //   @json($data)                    — safe defaults
+            //   @json($data, JSON_PRETTY_PRINT) — custom flags OR-ed with defaults
+            //
+            case 'json':
+                $safeFlags = 'JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE';
+                if ($args !== null && $this->hasInlineValue($args)) {
+                    // @json($data, CUSTOM_FLAGS) — two arguments
+                    [$exprPart, $flagsPart] = $this->parseSectionArgs($args);
+                    $expr  = trim($exprPart);
+                    $flags = trim($flagsPart) . ' | ' . $safeFlags;
+                    return "<?php echo json_encode({$expr}, {$flags}); ?>";
+                }
+                // @json($data) — single argument
+                return "<?php echo json_encode({$args}, {$safeFlags}); ?>";
+
+            // ── @class (Phase 5) ──────────────────────────────────────────────
+            //
+            // Conditionally builds a CSS class string from an array.
+            //
+            // Usage:
+            //   <div @class(['btn', 'btn-primary' => $isPrimary, 'btn-disabled' => !$active])>
+            //
+            // Compiled:
+            //   <div class="<?php echo \Luany\Lte\ClassHelper::compile([...]); ?>">
+            //
+            // The array expression is passed verbatim to ClassHelper::compile()
+            // which evaluates conditions at runtime.
+            //
+            case 'class':
+                return "class=\"<?php echo \\Luany\\Lte\\ClassHelper::compile({$args}); ?>\"";
+
+            // ── @component / @slot / @endslot / @endcomponent (Phase 5) ──────
+            //
+            // Component system with default slot and named slots.
+            //
+            // Usage (parent view):
+            //   @component('components.alert', ['type' => 'error'])
+            //       @slot('title')Error Title@endslot
+            //       This is the default slot content.
+            //   @endcomponent
+            //
+            // Component file (components/alert.lte):
+            //   <div class="alert alert-{{ $type }}">
+            //       <strong>{{ $title }}</strong>
+            //       <p>{{ $slot }}</p>
+            //   </div>
+            //
+            case 'component':
+                [$viewName, $dataExpr] = $this->parseComponentArgs($args);
+                return "<?php \\Luany\\Lte\\ComponentStack::startComponent(\$__engine, '{$viewName}', {$dataExpr}); ?>";
+
+            case 'slot':
+                $slotName = $args !== null ? trim($args, '\'"') : '__default';
+                return "<?php \\Luany\\Lte\\ComponentStack::startSlot('{$slotName}'); ?>";
+
+            case 'endslot':
+                return '<?php \\Luany\\Lte\\ComponentStack::endSlot(); ?>';
+
+            case 'endcomponent':
+                return '<?php echo \\Luany\\Lte\\ComponentStack::endComponent(); ?>';
+
+            // ── Debug helpers ─────────────────────────────────────────────────
             case 'dump':
                 return "<?php var_dump({$args}); ?>";
-
             case 'dd':
                 return "<?php var_dump({$args}); die; ?>";
 
-            // ── @isset / @endisset ────────────────────────────────────────────────────
+            // ── @isset / @endisset ────────────────────────────────────────────
             case 'isset':
                 return "<?php if(isset({$args})): ?>";
-
             case 'endisset':
                 return '<?php endif; ?>';
 
-            // ── @ifempty / @endifempty ────────────────────────────────────────────────
+            // ── @ifempty / @endifempty ────────────────────────────────────────
             case 'ifempty':
                 return "<?php if(empty({$args})): ?>";
-
             case 'endifempty':
                 return '<?php endif; ?>';
 
@@ -367,6 +387,45 @@ class Compiler
             return $this->parseSectionArgs($args);
         }
         return [trim($args, '\'"'), "''"];
+    }
+
+    /**
+     * Parse @component arguments: 'view.name' or 'view.name', ['key' => 'val'].
+     *
+     * @return array{0: string, 1: string}  [viewName, dataExpression]
+     */
+    private function parseComponentArgs(?string $args): array
+    {
+        if ($args === null || trim($args) === '') {
+            return ['', '[]'];
+        }
+
+        if ($this->hasInlineValue($args)) {
+            // Two arguments: 'view.name', [...]
+            $depth   = 0;
+            $splitAt = -1;
+            $inS = $inD = false;
+
+            for ($i = 0, $len = strlen($args); $i < $len; $i++) {
+                $ch = $args[$i];
+                if ($ch === "'" && !$inD) { $inS = !$inS; continue; }
+                if ($ch === '"' && !$inS) { $inD = !$inD; continue; }
+                if (!$inS && !$inD) {
+                    if ($ch === '[' || $ch === '(') $depth++;
+                    elseif ($ch === ']' || $ch === ')') $depth--;
+                    elseif ($ch === ',' && $depth === 0) { $splitAt = $i; break; }
+                }
+            }
+
+            if ($splitAt !== -1) {
+                $viewPart = trim(substr($args, 0, $splitAt), '\'" ');
+                $dataPart = trim(substr($args, $splitAt + 1));
+                return [$viewPart, $dataPart];
+            }
+        }
+
+        // Single argument: just 'view.name'
+        return [trim($args, '\'" '), '[]'];
     }
 
     // ── Custom directives ──────────────────────────────────────────────────────
