@@ -213,8 +213,9 @@ class Phase5EngineTest extends TestCase
 
     public function test_nested_components(): void
     {
-        $this->write('components/outer.lte', '<outer>{{ $slot }}</outer>');
-        $this->write('components/inner.lte', '<inner>{{ $slot }}</inner>');
+        // Slot content is already-rendered HTML — must use {!! !!} to avoid double-escaping
+        $this->write('components/outer.lte', '<outer>{!! $slot !!}</outer>');
+        $this->write('components/inner.lte', '<inner>{!! $slot !!}</inner>');
         $this->write('page.lte',
             '@component("components.outer")' .
             '@component("components.inner")Deep@endcomponent' .
@@ -238,14 +239,16 @@ class Phase5EngineTest extends TestCase
 
     public function test_error_message_contains_lte_line_number(): void
     {
-        // A view that throws at a known line
-        $this->write('broken.lte', "<p>line 1</p>\n<p>line 2</p>\n{{ \$undeclared->method() }}");
+        // Use @php(throw ...) to force a clean error with zero PHP warnings.
+        // The previous approach used $undeclared->method() which emitted a
+        // PHP Warning (undefined variable) before the Error — PHPUnit 11
+        // treats that Warning as a risky test even when the Error is caught.
+        $this->write('broken.lte', "<p>line 1</p>\n<p>line 2</p>\n@php(throw new \\RuntimeException('forced error'))");
 
         try {
             $this->render('broken');
             $this->fail('Expected RuntimeException');
         } catch (\RuntimeException $e) {
-            // Should mention the view file
             $this->assertStringContainsString('broken.lte', $e->getMessage());
         }
     }

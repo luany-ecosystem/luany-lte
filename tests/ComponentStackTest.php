@@ -112,16 +112,31 @@ class ComponentStackTest extends TestCase
         ComponentStack::startSlot('title');
     }
 
-    public function test_end_slot_without_start_does_not_crash(): void
+    public function test_end_slot_without_active_slot_does_not_crash(): void
     {
-        // Orphan @endslot inside a component — should not throw
-        $this->write('comp.lte', '{{ $slot }}');
+        // Verify that calling endSlot() when no named slot is active
+        // (i.e. the orphan path where frame['active'] === null) does not throw.
+        //
+        // We test this through the Engine so that all ob_start/ob_get_clean
+        // calls are managed inside Engine::evaluate() — not exposed to PHPUnit.
+        //
+        // Template: opens a slot, ends it, then calls endSlot again (orphan).
+        // The second @endslot is the orphan case we are testing.
+        $this->write('components/comp.lte', '{{ $slot }}');
 
-        ComponentStack::startComponent($this->engine, 'comp');
-        ComponentStack::endSlot(); // orphan — graceful
-        $out = ComponentStack::endComponent();
+        // page.lte: uses @component with one named slot + one extra @endslot (orphan)
+        $this->write('page.lte',
+            '@component("components.comp")' .
+            '@slot("title")Title content@endslot' .
+            '@endslot' .   // ← orphan: no active named slot at this point
+            'Body content.' .
+            '@endcomponent'
+        );
 
+        // Must not throw
+        $out = $this->engine->render('page');
         $this->assertIsString($out);
+        $this->assertStringContainsString('Body content.', $out);
     }
 
     // ── reset() ───────────────────────────────────────────────────────────────
@@ -145,8 +160,9 @@ class ComponentStackTest extends TestCase
 
     public function test_nested_components_resolve_independently(): void
     {
-        $this->write('outer.lte', '<outer>{{ $slot }}</outer>');
-        $this->write('inner.lte', '<inner>{{ $slot }}</inner>');
+        // Slot content is already-rendered HTML — use {!! !!} to avoid double-escaping
+        $this->write('outer.lte', '<outer>{!! $slot !!}</outer>');
+        $this->write('inner.lte', '<inner>{!! $slot !!}</inner>');
 
         ComponentStack::startComponent($this->engine, 'outer');
 

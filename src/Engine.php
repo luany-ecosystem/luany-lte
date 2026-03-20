@@ -60,7 +60,12 @@ class Engine
         if ($isRoot) {
             SectionStack::reset();
             AssetStack::reset();
-            ComponentStack::reset();
+            // Only reset ComponentStack if no component resolution is in progress.
+            // endComponent() calls render() at depth 0 — resetting here would
+            // destroy outer component frames that are still on the stack.
+            if (!ComponentStack::isActive()) {
+                ComponentStack::reset();
+            }
         }
 
         self::$renderDepth++;
@@ -207,19 +212,33 @@ class Engine
      */
     private function evaluate(string $path, array $data, string $sourcePath = ''): string
     {
-        $data['__engine'] = $this;
-        extract($data, EXTR_SKIP);
+        // Move the internal $data parameter into a __ prefixed variable and
+        // unset it BEFORE calling extract(). This prevents a name collision:
+        // if the caller passed ['data' => ...], extract() would create $data
+        // in scope, but then unset($data) below would destroy it.
+        $__lte_vars             = $data;
+        $__lte_vars['__engine'] = $this;
+        unset($data); // remove parameter from scope before extract
 
-        unset($data);
+        extract($__lte_vars, EXTR_SKIP);
+        unset($__lte_vars); // remove internal copy — user's $data (if any) remains
         $__lte_path   = $path;
         $__lte_source = $sourcePath;
         unset($path);
 
+        // Record the output buffer depth before we open ours.
+        // In the error path we restore to exactly this level — no more, no less.
+        // This prevents PHPUnit 11 from warning about "closed output buffers
+        // other than its own" when tested code deliberately triggers errors.
+        $__lte_ob_level = ob_get_level();
         ob_start();
         try {
             require $__lte_path;
         } catch (\Throwable $e) {
-            ob_end_clean();
+            // Clean only the buffers we opened, leaving PHPUnit's own untouched
+            while (ob_get_level() > $__lte_ob_level) {
+                ob_end_clean();
+            }
 
             // Try to map the PHP error line back to an .lte source line
             $lteLine = $this->resolveLteLine($__lte_path, $e->getLine());

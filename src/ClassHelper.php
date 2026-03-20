@@ -69,4 +69,17 @@ final class ClassHelper
 
         return implode(' ', $result);
     }
+
+    /**
+     * Build a complete class="..." HTML attribute string.
+     *
+     * Convenience wrapper over compile() used by the @class directive.
+     * Keeps the generated PHP template free of any string-literal quoting.
+     *
+     * @param array<int|string, mixed> $classes
+     */
+    public static function attr(array $classes): string
+    {
+        return 'class="' . self::compile($classes) . '"';
+    }
 }

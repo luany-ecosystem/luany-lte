@@ -71,6 +71,15 @@ class ComponentStack
     }
 
     /**
+     * Whether there are any active component frames on the stack.
+     * Used by Engine::render() to avoid resetting mid-resolution state.
+     */
+    public static function isActive(): bool
+    {
+        return !empty(self::$stack);
+    }
+
+    /**
      * Begin a component context.
      *
      * Called by compiled @component directive:
@@ -124,10 +133,9 @@ class ComponentStack
         $frame = &self::currentFrame();
 
         if ($frame['active'] === null) {
-            // No named slot is open — orphan @endslot, clean buffer
-            if (ob_get_level() > 0) {
-                ob_end_clean();
-            }
+            // Orphan @endslot — no named slot is open, nothing to close.
+            // Do NOT call ob_end_clean() here: the active ob belongs to the
+            // surrounding @component default-slot capture, not to this slot.
             return;
         }
 
