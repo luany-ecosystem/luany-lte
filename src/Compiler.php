@@ -253,13 +253,13 @@ class Compiler
             //   <div @class(['btn', 'btn-primary' => $isPrimary, 'btn-disabled' => !$active])>
             //
             // Compiled:
-            //   <div class="[output of ClassHelper::compile([...])]">
+            //   <div class="[output of ClassHelper::attr([...])]">
             //
-            // The array expression is passed verbatim to ClassHelper::compile()
-            // which evaluates conditions at runtime.
+            // The array expression is passed verbatim to ClassHelper::attr()
+            // which evaluates conditions at runtime and wraps in class="...".
             //
             case 'class':
-                return '<?php echo \'class="\' . Luany\Lte\ClassHelper::compile(' . $args . ') . \'"\'; ?>';
+                return '<?php echo Luany\Lte\ClassHelper::attr(' . $args . '); ?>';
 
             // ── @component / @slot / @endslot / @endcomponent (Phase 5) ──────
             //
