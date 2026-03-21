@@ -51,6 +51,7 @@ class Engine
      *
      * @param string $view  Dot-notation view name (e.g. 'pages.home')
      * @param array  $data  Variables to pass into the view
+     * @param  array<string, mixed>  $data    Variables to expose in the view
      * @throws \Exception If the view or layout cannot be found, or compilation fails
      */
     public function render(string $view, array $data = []): string
@@ -208,7 +209,8 @@ class Engine
      *
      * @param string $path       Absolute path to the compiled cache file
      * @param array  $data       Variables to extract into the view scope
-     * @param string $sourcePath Original .lte file path (for error messages)
+     * @param string             $sourcePath Original .lte file path (for error messages)
+     * @param array<string, mixed> $data
      */
     private function evaluate(string $path, array $data, string $sourcePath = ''): string
     {

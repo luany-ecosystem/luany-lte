@@ -2,7 +2,7 @@
 
 namespace Luany\Lte;
 
-/**
+/*
  * LTE SectionStack
  *
  * Manages the global state of @section/@yield/@extends/@push/@stack during rendering.
@@ -11,26 +11,33 @@ namespace Luany\Lte;
  *
  * Lifecycle:
  *   1. Engine::render() calls SectionStack::reset()
- *   2. Child view is evaluated:
- *        @extends → SectionStack::setLayout('layouts.main')
- *        @section('title', 'Home') → SectionStack::set('title', 'Home')
- *        @section('content') → SectionStack::start('content')  [ob_start]
- *        @endsection          → SectionStack::end()             [ob_get_clean → store]
- *        @push('head')        → SectionStack::startPush('head') [ob_start]
- *        @endpush             → SectionStack::endPush()         [ob_get_clean → append]
+ *   2. Child view is evaluated — LTE directives map to these calls:
+ *
+ * ```lte
+ * @extends('layouts.main')           → SectionStack::setLayout('layouts.main')
+ * @section('title', 'Home')          → SectionStack::set('title', 'Home')
+ * @section('content') @endsection    → SectionStack::start/end()   [ob_start/get_clean]
+ * @push('head') @endpush             → SectionStack::startPush/endPush()
+ * ```
+ *
  *   3. Engine::render() checks SectionStack::getLayout()
  *   4. Layout is evaluated:
- *        @yield('title')   → SectionStack::get('title')
- *        @yield('content') → SectionStack::get('content')
- *        @stack('head')    → SectionStack::getStack('head')
+ *
+ * ```lte
+ * @yield('title')    → SectionStack::get('title')
+ * @yield('content')  → SectionStack::get('content')
+ * @stack('head')     → SectionStack::getStack('head')
+ * ```
  */
 class SectionStack
 {
+    /** @var array<string, string> */
     private static array   $sections       = [];
     private static ?string $currentSection = null;
     private static ?string $layout         = null;
 
     // ── Push/Stack (v0.2) ──────────────────────────────────────────────────────
+    /** @var array<string, array<int, string>> */
     private static array   $stacks       = [];
     private static ?string $currentStack = null;
 
@@ -118,7 +125,7 @@ class SectionStack
 
     // ── Push / Stack (v0.2) ───────────────────────────────────────────────────
 
-    /**
+    /*
      * Begin capturing content to push into a named stack.
      * Multiple @push calls to the same stack are accumulated — never replaced.
      *
@@ -159,11 +166,14 @@ class SectionStack
         self::$currentStack = null;
     }
 
-    /**
+    /*
      * Render all content pushed to a named stack.
      *
      * Example:
-     *   @stack('head')
+     *
+     * ```lte
+     * @stack('head')
+     * ```
      */
     public static function getStack(string $name): string
     {

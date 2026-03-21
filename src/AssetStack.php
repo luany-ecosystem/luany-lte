@@ -2,7 +2,7 @@
 
 namespace Luany\Lte;
 
-/**
+/*
  * LTE AssetStack
  *
  * Manages inline styles and scripts defined inside .lte views/components.
@@ -32,14 +32,19 @@ namespace Luany\Lte;
  */
 class AssetStack
 {
+    /** @var array<int, array{content: string, options: array<string, mixed>}> */
     private static array $styles  = [];
+    /** @var array<int, array{content: string, options: array<string, mixed>}> */
     private static array $scripts = [];
 
+    /** @var array<string, bool> */
     private static array $styleHashes  = [];
+    /** @var array<string, bool> */
     private static array $scriptHashes = [];
 
     private static bool  $capturingStyle  = false;
     private static bool  $capturingScript = false;
+    /** @var array<string, mixed> */
     private static array $pendingOptions  = [];
 
     // ── Reset ─────────────────────────────────────────────────────────────────
@@ -64,7 +69,7 @@ class AssetStack
     /**
      * Begin capturing an inline style block.
      *
-     * @param array $options  Supported: ['scoped'] — reserved for v0.3
+     * @param array<string, mixed> $options  Supported: ['scoped'] — reserved for v0.3
      */
     public static function startStyle(array $options = []): void
     {
@@ -102,7 +107,7 @@ class AssetStack
     /**
      * Begin capturing an inline script block.
      *
-     * @param array $options  Supported: ['defer']
+     * @param array<string, mixed> $options  Supported: ['defer']
      */
     public static function startScript(array $options = []): void
     {

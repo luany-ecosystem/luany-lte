@@ -2,7 +2,7 @@
 
 namespace Luany\Lte;
 
-/**
+/*
  * LTE Parser
  *
  * Converts .lte source code into an Abstract Syntax Tree (AST).
@@ -31,7 +31,7 @@ class Parser
      * Parse LTE source into AST.
      *
      * @param  string  $source  Raw .lte template source
-     * @return array<int, array>  Array of AST nodes
+     * @return array<int, array<string, mixed>>  Array of AST nodes
      */
     public function parse(string $source): array
     {
@@ -54,6 +54,7 @@ class Parser
 
     // ── Token dispatch ─────────────────────────────────────────────────────────
 
+    /** @return array<string, mixed>|null */
     private function parseNext(): ?array
     {
         if ($this->match('{{--')) return $this->parseComment();
@@ -65,7 +66,7 @@ class Parser
 
     // ── Comment {{-- ... --}} ──────────────────────────────────────────────────
 
-    private function parseComment(): ?array
+    private function parseComment(): null
     {
         $end = strpos($this->source, '--}}', $this->position);
         if ($end === false) {
@@ -83,6 +84,7 @@ class Parser
 
     // ── Echo {{ $var }} ────────────────────────────────────────────────────────
 
+    /** @return array<string, mixed> */
     private function parseEcho(): array
     {
         $startLine = $this->line;
@@ -102,6 +104,7 @@ class Parser
 
     // ── Raw echo {!! $var !!} ──────────────────────────────────────────────────
 
+    /** @return array<string, mixed> */
     private function parseRawEcho(): array
     {
         $startLine = $this->line;
@@ -121,6 +124,7 @@ class Parser
 
     // ── Directive @name(...) ───────────────────────────────────────────────────
 
+    /** @return array<string, mixed> */
     private function parseDirective(): array
     {
         $startLine = $this->line;
@@ -221,6 +225,7 @@ class Parser
 
     // ── Plain text ─────────────────────────────────────────────────────────────
 
+    /** @return array<string, mixed> */
     private function parseText(): array
     {
         $startLine = $this->line;

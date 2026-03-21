@@ -2,28 +2,30 @@
 
 namespace Luany\Lte;
 
-/**
+/*
  * ComponentStack
  *
- * Manages the rendering context for @component / @slot / @endslot / @endcomponent.
+ * Manages the rendering context for @component/@slot/@endslot/@endcomponent directives.
  *
  * Components are a higher-level abstraction than @include:
  *   - They have a default slot (content between @component and @endcomponent
  *     that is not inside a @slot block)
  *   - They support named slots (@slot('title') ... @endslot)
  *   - The component view receives all slots as PHP variables:
- *       $slot          → default slot content (string)
- *       $title         → named slot 'title' content (string)
+ *       $slot   → default slot content (string)
+ *       $title  → named slot 'title' content (string)
  *       + any explicit $data passed to @component
  *
  * Usage in a parent view:
  *
- *   @component('components.alert', ['type' => 'error'])
- *       @slot('title')
- *           Error!
- *       @endslot
- *       Something went wrong. Please try again.
- *   @endcomponent
+ * ```lte
+ * @component('components.alert', ['type' => 'error'])
+ *     @slot('title')
+ *         Error!
+ *     @endslot
+ *     Something went wrong. Please try again.
+ * @endcomponent
+ * ```
  *
  * Component file (components/alert.lte):
  *
@@ -53,6 +55,7 @@ class ComponentStack
      *
      * @var array<int, array{engine: Engine, view: string, data: array, slots: array, default: string, active: string|null}>
      */
+    /** @var array<int, array<string, mixed>> */
     private static array $stack = [];
 
     /**
@@ -87,7 +90,7 @@ class ComponentStack
      *
      * @param Engine $engine   The current rendering engine instance
      * @param string $view     Dot-notation view name of the component
-     * @param array  $data     Explicit data to pass to the component view
+     * @param array<string, mixed>  $data  Explicit data to pass to the component view
      */
     public static function startComponent(Engine $engine, string $view, array $data = []): void
     {
@@ -186,6 +189,7 @@ class ComponentStack
      * @return array Reference to the current frame
      * @throws \RuntimeException If called outside a @component block
      */
+    /** @return array<string, mixed> */
     private static function &currentFrame(): array
     {
         $last = count(self::$stack) - 1;
