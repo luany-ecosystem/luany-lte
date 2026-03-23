@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased] — next/v1
+## [1.0.0] — 2026-03-23
 
 ### Added
 - `@json` directive — renders any PHP value as formatted JSON inside `<pre>` tags. Useful for debugging template variables.
