@@ -1,402 +1,448 @@
-# LTE — Luany Template Engine
+# luany/lte
 
-> AST-based template engine for PHP. Compiler-grade templating with zero regex parsing.
+**AST-compiled template engine for PHP. Zero regex. Compiler-grade templating.**
 
-LTE can be used **independently** of the Luany framework — drop it into any PHP project.
+**Version**: v1.0.0 &nbsp;|&nbsp; **PHP**: >= 8.2 &nbsp;|&nbsp; **License**: MIT
+**Author**: António Ambrósio Ngola &nbsp;|&nbsp; **Org**: [luany-ecosystem](https://github.com/luany-ecosystem)
 
-## Why LTE?
+---
 
-Most PHP template engines compile templates using regex. LTE uses a real **Parser → AST → Compiler** pipeline:
+## Table of Contents
 
-- Predictable, deterministic output
-- Zero regex in the entire pipeline — character-by-character parsing throughout
-- Integrated asset lifecycle — styles and scripts as first-class template citizens
-- Automatic CSS/JS deduplication — include a component 10× and its assets appear once
-- Cache-aware compilation
-- First-class tooling support (VS Code extension available)
-- **Truly standalone** — zero external dependencies, works in any PHP 8.1+ project
+1. [Overview](#1-overview)
+2. [Installation](#2-installation)
+3. [Basic Usage](#3-basic-usage)
+4. [Output](#4-output)
+5. [Conditionals](#5-conditionals)
+6. [Loops](#6-loops)
+7. [Layout System](#7-layout-system)
+8. [Includes](#8-includes)
+9. [Components & Slots](#9-components--slots)
+10. [Asset Directives](#10-asset-directives)
+11. [Stack Directives](#11-stack-directives)
+12. [PHP Blocks](#12-php-blocks)
+13. [Security Directives](#13-security-directives)
+14. [Auth Guards](#14-auth-guards)
+15. [Debug Helpers](#15-debug-helpers)
+16. [JSON Output](#16-json-output)
+17. [Conditional Classes](#17-conditional-classes)
+18. [Custom Directives](#18-custom-directives)
+19. [Error Reporting](#19-error-reporting)
+20. [Changelog](#20-changelog)
 
-## Installation
+---
+
+## 1. Overview
+
+LTE (Luany Template Engine) compiles `.lte` templates to PHP via a hand-written AST parser. There is **no regex** in the parsing pipeline — every token is identified character-by-character.
+
+**Render pipeline:**
+
+```
+.lte source -> Parser (AST) -> Compiler (PHP string) -> cache file -> evaluate -> HTML
+```
+
+- `Parser` — tokenises source into AST nodes: `text`, `echo`, `raw_echo`, `php_block`, `directive`
+- `Compiler` — translates AST nodes to PHP code strings
+- `Engine` — orchestrates compile, cache, evaluate, resolves layouts and components
+
+---
+
+## 2. Installation
 
 ```bash
 composer require luany/lte
 ```
 
-## Basic Usage
+---
+
+## 3. Basic Usage
 
 ```php
 use Luany\Lte\Engine;
 
 $engine = new Engine(
     viewsPath:  '/path/to/views',
-    cachePath:  '/path/to/cache',
-    autoReload: true
+    cachePath:  '/path/to/storage/cache/views',
+    autoReload: true,  // true = recompile every request (dev); false = use cache (production)
 );
 
-echo $engine->render('pages.dashboard', ['user' => $user]);
+$html = $engine->render('pages.home', ['title' => 'Welcome', 'user' => $user]);
+```
+
+View files use the `.lte` extension and are resolved with dot notation:
+`'pages.home'` resolves to `views/pages/home.lte`
+
+---
+
+## 4. Output
+
+```html
+{{-- HTML-escaped output --}}
+<p>{{ $name }}</p>
+<p>{{ $user->email }}</p>
+<p>{{ strtoupper($text) }}</p>
+
+{{-- Raw/unescaped output --}}
+<p>{!! $trustedHtml !!}</p>
+
+{{-- Comments are removed from compiled output --}} {{-- This will not appear in
+the HTML --}}
 ```
 
 ---
 
-## Template Syntax
+## 5. Conditionals
 
-### Output
-
-```lte
-{{ $variable }}       {{-- escaped output --}}
-{!! $variable !!}     {{-- raw output --}}
-{{-- comment --}}     {{-- never rendered --}}
-```
-
-### Conditionals
-
-```lte
-@if($condition)
-    ...
-@elseif($other)
-    ...
+```html
+@if($user)
+<p>Hello, {{ $user->name }}</p>
+@elseif($guest)
+<p>Welcome, guest</p>
 @else
-    ...
-@endif
-
-@unless($condition)
-    ...
-@endunless
+<p>Please login</p>
+@endif @unless($banned)
+<p>Welcome!</p>
+@endunless @isset($title)
+<h1>{{ $title }}</h1>
+@endisset @ifempty($items)
+<p>No items found.</p>
+@endifempty
 ```
 
-### Loops
+---
 
-```lte
-@foreach($items as $item)
-    <li>{{ $item }}</li>
-@endforeach
+## 6. Loops
 
-@forelse($items as $item)
-    <li>{{ $item }}</li>
+```html
+@foreach($users as $user)
+<li>{{ $user->name }}</li>
+@endforeach @forelse($posts as $post)
+<li>{{ $post->title }}</li>
 @empty
-    <p>No items found.</p>
-@endforelse
-
-@for($i = 0; $i < 10; $i++)
-    {{ $i }}
-@endfor
+<p>No posts yet.</p>
+@endforelse {{-- Nested @forelse uses unique internal variables per level --}}
+@forelse($categories as $category) @forelse($category->posts as $post)
+<li>{{ $post->title }}</li>
+@empty
+<p>No posts in {{ $category->name }}</p>
+@endforelse @empty
+<p>No categories.</p>
+@endforelse @for($i = 0; $i < 10; $i++)
+<span>{{ $i }}</span>
+@endfor @while($condition) ... @endwhile
 ```
 
-### Layout System
+---
 
-```lte
-{{-- child view --}}
-@extends('layouts.main')
+## 7. Layout System
 
-@section('title', 'My Page')
+**Layout** (`views/layouts/main.lte`):
 
-@section('content')
-    <h1>Hello World</h1>
-@endsection
-```
-
-```lte
-{{-- layouts/main.lte --}}
-<html>
-<head>
-    <title>@yield('title', 'Default')</title>
-</head>
-<body>
-    @yield('content')
-</body>
+```html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>@yield('title', 'My App')</title>
+    @stack('head') @styles
+  </head>
+  <body>
+    @yield('content') @scripts @stack('scripts')
+  </body>
 </html>
 ```
 
-### Include
+**Page** (`views/pages/home.lte`):
 
-```lte
-@include('components.navbar')
-@include('components.card', ['title' => 'Hello', 'body' => 'World'])
+```html
+@extends('layouts.main') @section('title', 'Home Page') @push('head')
+<meta name="description" content="Welcome" />
+@endpush @section('content')
+<h1>Welcome</h1>
+<p>{{ $message }}</p>
+@endsection
 ```
 
-### Security
+| Directive                          | Description                    |
+| ---------------------------------- | ------------------------------ |
+| `@extends('layout')`               | Declare the parent layout      |
+| `@section('name') ... @endsection` | Define a block section         |
+| `@section('name', 'value')`        | Define an inline section       |
+| `@yield('name')`                   | Output a section               |
+| `@yield('name', 'default')`        | Output a section with fallback |
+| `@stop`                            | Alias for `@endsection`        |
 
-```lte
-@csrf
-@method('PUT')
-```
+---
 
-### Auth Guards
+## 8. Includes
 
-```lte
-@auth
-    <a href="/dashboard">Dashboard</a>
-@endauth
-
-@guest
-    <a href="/auth">Login</a>
-@endguest
+```html
+{{-- Parent variables are passed automatically --}}
+@include('components.navbar') {{-- With extra data merged in --}}
+@include('components.card', ['title' => 'Hello', 'body' => $content])
 ```
 
 ---
 
-## Asset Directives (v0.2)
+## 9. Components & Slots
 
-LTE treats inline CSS and JS as **first-class template citizens**.  
-Styles and scripts defined anywhere in views or components are automatically accumulated, deduplicated, and rendered at the correct position in the layout.
+Components are reusable view fragments with named slots. The component view receives all slots as PHP variables.
 
-### How it works
+**Component file** (`views/components/alert.lte`):
 
-```
-View / Component render:
-  @style   → captured by AssetStack
-  @script  → captured by AssetStack
-
-Layout render:
-  @styles  → outputs all captured <style> blocks  (place in <head>)
-  @scripts → outputs all captured <script> blocks (place before </body>)
+```html
+<div class="alert alert-{{ $type }}">
+  @isset($title)
+  <strong>{!! $title !!}</strong>
+  @endisset {!! $slot !!}
+</div>
 ```
 
-**Deduplication is automatic.** If the same component is `@include`'d 10 times, its `@style` and `@script` blocks appear exactly **once** in the final HTML — deduplicated by content hash.
+**Usage in a parent view:**
 
-### @style / @endstyle
-
-```lte
-@style
-    .card {
-        padding: 1rem;
-        border-radius: .5rem;
-    }
-@endstyle
+```html
+@component('components.alert', ['type' => 'error']) @slot('title') Something
+went wrong @endslot Please check your input and try again. @endcomponent
 ```
 
-### @script / @endscript
+| Variable | Source                                                                            |
+| -------- | --------------------------------------------------------------------------------- |
+| `$slot`  | Default slot — content inside `@component...@endcomponent` not in a named `@slot` |
+| `$title` | Named slot — content of `@slot('title')...@endslot`                               |
+| `$type`  | Explicit data — second argument to `@component`                                   |
 
-```lte
-@script(defer)
-    document.querySelectorAll('.card').forEach(c => {
-        c.addEventListener('click', () => console.log('clicked'));
-    });
-@endscript
+**Important:** Slot content is already-rendered HTML. Always use `{!! $slot !!}` and `{!! $namedSlot !!}` inside component views to avoid double-escaping.
+
+Nested components are fully supported.
+
+---
+
+## 10. Asset Directives
+
+Inline `<style>` and `<script>` blocks declared anywhere in the view tree are collected and rendered at a designated position in the layout. Duplicate blocks (same content) are automatically deduplicated.
+
+```html
+@style .card { padding: 1rem; border-radius: 4px; } @endstyle @script(defer)
+document.querySelector('.card').addEventListener('click', fn); @endscript
 ```
 
-Supported option: `defer`
+In your layout:
 
-### @styles and @scripts in layout
-
-```lte
+```html
 <head>
-    <link rel="stylesheet" href="/assets/css/app.css">
-    @styles      {{-- all accumulated <style> blocks render here --}}
-    @stack('head')
+  @styles
 </head>
 <body>
-    @yield('content')
-    <script src="/assets/js/app.js"></script>
-    @scripts     {{-- all accumulated <script> blocks render here --}}
-    @stack('scripts')
+  ... @scripts
 </body>
 ```
 
+`@script(defer)` adds the `defer` attribute to the rendered `<script>` tag.
+
 ---
 
-## Stack Directives (v0.2)
+## 11. Stack Directives
 
-Push content into named stacks from **page views**. Multiple pushes to the same stack accumulate — they never overwrite each other.
+Named stacks accumulate content from multiple `@push` calls. Unlike `@section`, pushes never replace previous content — they always append.
 
-> **Important:** `@push` has no deduplication — if used inside a component that is `@include`'d multiple times, the content will appear multiple times. Use `@style` / `@script` inside components instead — they deduplicate automatically.
-
-```lte
-{{-- in a page view --}}
-@push('head')
-    <meta name="description" content="My page">
-@endpush
-
-{{-- in the layout --}}
-@stack('head')
+```html
+{{-- In any view or component --}} @push('head')
+<link rel="stylesheet" href="/css/page.css" />
+@endpush {{-- In layout --}} @stack('head')
 ```
 
 ---
 
-## Render Flow
+## 12. PHP Blocks
 
-How LTE assembles the final HTML — validated by real test output:
-
-```
-Component (card.lte, alert.lte, ...)
-  │  @style   ──────────────────────────► AssetStack (styles[])
-  │  @script  ──────────────────────────► AssetStack (scripts[])
-  │  HTML     ──────────────────────────► rendered inline
-  │
-  ▼ @include
-Page View (pages/dashboard.lte)
-  │  @push('head') ────────────────────► SectionStack (stacks['head'])
-  │  @style        ────────────────────► AssetStack (styles[])
-  │  @section('content') ──────────────► SectionStack (sections['content'])
-  │  @script       ────────────────────► AssetStack (scripts[])
-  │
-  ▼ @extends
-Layout (layouts/main.lte)
-  │  @styles       ◄───── AssetStack::renderStyles()   → <style> in <head>
-  │  @stack('head')◄───── SectionStack::getStack()     → <meta>, links in <head>
-  │  @yield('content')◄── SectionStack::get()          → HTML in <main>
-  │  @scripts      ◄───── AssetStack::renderScripts()  → <script> before </body>
+```html
+{{-- Inline (self-closing) --}} @php($count = count($items)) {{-- Block --}}
+@php $grouped = []; foreach ($items as $item) { $grouped[$item->category][] =
+$item; } @endphp
 ```
 
-**Deduplication proof** — from the real render test:
-
-| Component | Included | CSS rendered | JS rendered |
-|---|---|---|---|
-| `card.lte` | 3× | 1× | 1× |
-| `alert.lte` | 2× | 1× | — |
-| `dashboard.lte` (page) | 1× | 1× | 1× |
+Content inside `@php ... @endphp` is never parsed for LTE directives or echo tags.
 
 ---
 
-## Official View Structure (v0.2)
+## 13. Security Directives
 
-```
-@extends('layouts.main')               ← layout base
-
-@section('title', 'Page Title')        ← page title
-
-@push('head')                          ← head metadata (SEO, external links)
-    <meta name="description" content="...">
-@endpush
-
-@style                                 ← page-level CSS (outside @section)
-    .hero { padding: 4rem 0; }
-@endstyle
-
-@section('content')                    ← visible HTML content
-    <h1>Hello</h1>
-    @include('components.card', [...])
-@endsection
-
-@script(defer)                         ← page-level JS (outside @section)
-    console.log('ready');
-@endscript
+```html
+<form method="POST" action="/users">@csrf @method('PUT') ...</form>
 ```
 
-### Page view vs Component
+- `@csrf` — generates `<input type="hidden" name="csrf_token" value="...">` using `$_SESSION['csrf_token']` (auto-generated with `random_bytes(32)` if absent)
+- `@method('PUT')` — generates `<input type="hidden" name="_method" value="PUT">` for HTML form method override
 
-| Context | Pattern |
-|---|---|
-| **Page view** | `@style` and `@script` outside `@section`, at view level |
-| **Component** | `@style` and `@script` collocated with the component HTML |
+---
 
-**Component example** — self-contained, owns its own CSS and JS:
+## 14. Auth Guards
 
-```lte
-{{-- components/card.lte --}}
-@style
-    .lte-card { border-radius: .75rem; padding: 1.5rem; }
-@endstyle
+```html
+@auth
+<p>Welcome, {{ $_SESSION['user_name'] }}</p>
+@endauth @guest
+<a href="/login">Login</a>
+@endguest
+```
 
-<div class="lte-card">
-    <h3>{{ $title }}</h3>
-    <p>{{ $body }}</p>
-</div>
+Guards check `isset($_SESSION['user_id'])`. For custom auth logic, use `@if` or register a custom directive.
 
-@script(defer)
-    document.querySelectorAll('.lte-card').forEach(c => {
-        c.addEventListener('click', () => c.style.borderColor = '#6366f1');
-    });
-@endscript
+---
+
+## 15. Debug Helpers
+
+```html
+@dump($variable) {{-- var_dump() --}} @dd($variable) {{-- var_dump() + die --}}
 ```
 
 ---
 
-## Directive Reference
+## 16. JSON Output
 
-| Directive | Description |
-|---|---|
-| `{{ $var }}` | Echo escaped |
-| `{!! $var !!}` | Echo raw |
-| `{{-- ... --}}` | Template comment |
-| `@extends` | Inherit layout |
-| `@section` / `@endsection` | Define section |
-| `@yield` | Output section |
-| `@include` | Include partial |
-| `@if` / `@elseif` / `@else` / `@endif` | Conditionals |
-| `@unless` / `@endunless` | Negated conditional |
-| `@foreach` / `@endforeach` | Loop |
-| `@forelse` / `@empty` / `@endforelse` | Loop with empty state |
-| `@for` / `@endfor` | For loop |
-| `@while` / `@endwhile` | While loop |
-| `@php` / `@endphp` | Raw PHP block |
-| `@csrf` | CSRF token field |
-| `@method` | HTTP method override |
-| `@auth` / `@endauth` | Auth guard |
-| `@guest` / `@endguest` | Guest guard |
-| `@style` / `@endstyle` | Inline CSS block (v0.2) |
-| `@script` / `@endscript` | Inline JS block — option: `defer` (v0.2) |
-| `@styles` | Render accumulated styles (v0.2) |
-| `@scripts` | Render accumulated scripts (v0.2) |
-| `@push` / `@endpush` | Push to named stack (v0.2) |
-| `@stack` | Render named stack (v0.2) |
-| `@dump($var)` | Debug — var_dump (v0.2.2) |
-| `@dd($var)` | Debug — var_dump + die (v0.2.2) |
-| `@isset($var)` / `@endisset` | Conditional on isset() (v0.2.2) |
-| `@ifempty($var)` / `@endifempty` | Conditional on empty() (v0.2.2) |
+Safe JSON output for use in JavaScript contexts. Always applies XSS-safe encoding flags.
+
+```html
+<script>
+  const config = @json($config);
+  const users  = @json($users);
+</script>
+
+{{-- With additional flags (OR-ed with safe defaults) --}}
+<script>
+  const data = @json($data, JSON_PRETTY_PRINT);
+</script>
+```
+
+Always applied: `JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE`.
+`<` and `>` are encoded as `\u003C` / `\u003E`, preventing XSS injection.
 
 ---
 
-## Custom Directives
+## 17. Conditional Classes
+
+Builds a `class="..."` HTML attribute from a conditional array. Integer-keyed entries are always included; string-keyed entries are included only when their value is truthy.
+
+```html
+<button @class(['btn', 'btn-primary' => $isPrimary, 'btn-disabled' => !$active])>
+    Click me
+</button>
+```
+
+Given `$isPrimary = true`, `$active = true`:
+
+```html
+<button class="btn btn-primary"></button>
+```
+
+Given `$isPrimary = false`, `$active = false`:
+
+```html
+<button class="btn btn-disabled"></button>
+```
+
+Using `ClassHelper` directly in PHP:
 
 ```php
-$engine->getCompiler()->directive('datetime', function ($args) {
-    return "<?php echo date('d/m/Y H:i', strtotime({$args})); ?>";
+use Luany\Lte\ClassHelper;
+
+// Compile to class string only
+$classes = ClassHelper::compile(['flex', 'items-center', 'text-red-500' => $hasError]);
+// -> 'flex items-center text-red-500'  (when $hasError = true)
+
+// Compile to full class="..." attribute
+$attr = ClassHelper::attr(['btn', 'active' => $isActive]);
+// -> 'class="btn active"'
+```
+
+---
+
+## 18. Custom Directives
+
+```php
+// Register before rendering (e.g. in a ServiceProvider boot method)
+$engine->getCompiler()->directive('datetime', function (?string $args) {
+    $format = $args ?: "'Y-m-d H:i'";
+    return "<?php echo date({$format}); ?>";
+});
+
+$engine->getCompiler()->directive('money', function (?string $args) {
+    return "<?php echo number_format((float)({$args}), 2, '.', ','); ?>";
 });
 ```
 
-```lte
-@datetime($post->created_at)
+Usage:
+
+```html
+<p>Posted: @datetime('d/m/Y H:i')</p>
+<p>Price: @money($product->price)</p>
 ```
 
----
-
-## VS Code Extension
-
-First-class `.lte` file support on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=luany.luany-lte).
+The handler receives the raw argument string (content inside the parentheses) and must return a valid PHP string.
 
 ---
 
-## Changelog
+## 19. Error Reporting
 
-### v0.2.2
-- `@php` block now treats content as opaque raw PHP — LTE directives, `{{ }}`, and `{!! !!}` are never parsed inside `@php` / `@endphp` blocks
-- Parser exceptions changed from `\Exception` to `\RuntimeException`
-- `@dump($var)` — compiles to `var_dump($var)`
-- `@dd($var)` — compiles to `var_dump($var); die`
-- `@isset($var)` / `@endisset` — conditional on `isset()`
-- `@ifempty($var)` / `@endifempty` — conditional on `empty()`, no conflict with `@forelse @empty`
-- 108 tests, 170 assertions
+**Compilation errors** include the view name and source line:
 
-### v0.2.1
-- `@forelse` / `@empty` / `@endforelse` — loop with empty state (was documented but not implemented)
-- Scope isolation in `Engine::evaluate()` — `$path` and `$data` no longer leak into included views
-- `ob_get_level()` safety in `SectionStack` — prevents buffer corruption on orphan `@endsection`
-- 96 unit tests — `ParserTest`, `CompilerTest`, `EngineTest` covering the full pipeline
-- `phpunit.xml` configuration added
+```
+LTE compilation error in view [pages.home]: Unclosed echo tag on line 12.
+```
 
-### v0.2.0
-- `AssetStack` — inline CSS/JS with automatic deduplication by content hash
-- `@style` / `@endstyle` — inline style blocks (page-level and component-level)
-- `@script` / `@endscript` — inline script blocks (supports `defer`)
-- `@styles` / `@scripts` — render accumulated assets in layout
-- `@push` / `@endpush` / `@stack` — named accumulative stacks
-- `parseArgs` — robust argument parser (handles quoted strings with commas)
-- **Zero external dependencies** — `{{ $var }}` compiles to `htmlspecialchars()`, `@include` uses `$__engine->render()`, no framework helpers required
-- **Standalone confirmed** — tested and validated independently of the Luany framework
+**Runtime errors** include the `.lte` source line number:
 
-### v0.1.0
-- Initial release — Parser → AST → Compiler pipeline
-- Layout system (`@extends`, `@section`, `@yield`)
-- Full directive set (loops, conditionals, auth guards, CSRF)
-- Cache-aware compilation with `autoReload`
+```
+LTE render error in [pages.home.lte line 23]: Call to undefined method User::missing()
+```
+
+The Engine embeds `@lte:{N}` markers in compiled cache files and maps PHP runtime exceptions back to their original `.lte` source line.
 
 ---
 
-## Requirements
+## 20. Changelog
 
-- PHP 8.1+
+### next/v1 — Phase 5: Completion
 
-## License
+**New — `src/ComponentStack.php`**
 
-MIT — see [LICENSE](LICENSE) for details.
+- Stack-based context manager for `@component` / `@slot` / `@endslot` / `@endcomponent`
+- Supports nested components via frame stack
+- `isActive(): bool` — guards Engine reset during component rendering
+
+**New — `src/ClassHelper.php`**
+
+- `compile(array $classes): string` — conditional class array to space-separated string
+- `attr(array $classes): string` — returns full `class="..."` attribute string
+
+**Modified — `src/Parser.php`**
+
+- Every AST node now carries `'line' => N` (1-based source line)
+- Error messages include source line number
+- Line counter maintained accurately across all token types
+
+**Modified — `src/Compiler.php`**
+
+- `@json($data)` / `@json($data, FLAGS)` — XSS-safe JSON output
+- `@class([...])` — conditional CSS class builder via `ClassHelper::attr()`
+- `@component` / `@slot` / `@endslot` / `@endcomponent` — component system
+- Every compiled node prefixed with `<?php /* @lte:{N} */ ?>` line marker
+
+**Modified — `src/Engine.php`**
+
+- `ComponentStack::reset()` called at root render start, guarded by `isActive()`
+- Compilation errors wrapped with view name context
+- `evaluate()` uses `ob_get_level()` guard for clean buffer restoration
+- `resolveLteLine()` maps PHP exception line back to `.lte` source line
+
+**Tests added:** `Phase5CompilerTest` (30), `Phase5EngineTest` (21), `ComponentStackTest` (11)
+
+**Total: 170 tests, 252 assertions — all green, zero warnings.**
+
+---
+
+### v0.2.x baseline
+
+AST parser, Compiler with built-in directives, Engine with layout/cache/include system, SectionStack, AssetStack.
+
+Built-in directives: `@if`, `@elseif`, `@else`, `@endif`, `@unless`, `@endunless`, `@foreach`, `@endforeach`, `@for`, `@endfor`, `@while`, `@endwhile`, `@forelse`, `@empty`, `@endforelse`, `@php`, `@endphp`, `@csrf`, `@method`, `@auth`, `@endauth`, `@guest`, `@endguest`, `@extends`, `@section`, `@endsection`, `@stop`, `@yield`, `@include`, `@style`, `@endstyle`, `@script`, `@endscript`, `@styles`, `@scripts`, `@push`, `@endpush`, `@stack`, `@dump`, `@dd`, `@isset`, `@endisset`, `@ifempty`, `@endifempty`.

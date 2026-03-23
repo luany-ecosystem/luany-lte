@@ -6,10 +6,17 @@ namespace Luany\Lte;
  * LTE Engine — Orchestrator
  *
  * Render flow:
- *   1. SectionStack::reset() + AssetStack::reset()
+ *   1. SectionStack::reset() + AssetStack::reset() + ComponentStack::reset() (root only)
  *   2. Compile + evaluate child view  (populates sections/assets, sets layout)
  *   3. If @extends was used → compile + evaluate layout (consumes sections, renders assets)
  *   4. Return final HTML string
+ *
+ * Phase 5 additions:
+ *   - ComponentStack::reset() called at root render start
+ *   - evaluate() now catches Throwable and enriches error messages with
+ *     the .lte source line number (extracted from @lte:{N} PHP comments
+ *     embedded by the Compiler)
+ *   - compile() wraps parser/compiler errors with view name context
  */
 class Engine
 {
@@ -44,6 +51,8 @@ class Engine
      *
      * @param string $view  Dot-notation view name (e.g. 'pages.home')
      * @param array  $data  Variables to pass into the view
+     * @param  array<string, mixed>  $data    Variables to expose in the view
+     * @throws \Exception If the view or layout cannot be found, or compilation fails
      */
     public function render(string $view, array $data = []): string
     {
@@ -52,6 +61,12 @@ class Engine
         if ($isRoot) {
             SectionStack::reset();
             AssetStack::reset();
+            // Only reset ComponentStack if no component resolution is in progress.
+            // endComponent() calls render() at depth 0 — resetting here would
+            // destroy outer component frames that are still on the stack.
+            if (!ComponentStack::isActive()) {
+                ComponentStack::reset();
+            }
         }
 
         self::$renderDepth++;
@@ -64,12 +79,11 @@ class Engine
 
             $cachedPath = $this->getCachedPath($viewPath);
             if ($this->needsRecompile($viewPath, $cachedPath)) {
-                $this->compile($viewPath, $cachedPath);
+                $this->compile($viewPath, $cachedPath, $view);
             }
 
-            $output = $this->evaluate($cachedPath, $data);
+            $output = $this->evaluate($cachedPath, $data, $viewPath);
 
-            // Only the root render resolves layouts
             if ($isRoot) {
                 $layout = SectionStack::getLayout();
                 if ($layout !== null) {
@@ -79,9 +93,9 @@ class Engine
                     }
                     $layoutCached = $this->getCachedPath($layoutPath);
                     if ($this->needsRecompile($layoutPath, $layoutCached)) {
-                        $this->compile($layoutPath, $layoutCached);
+                        $this->compile($layoutPath, $layoutCached, $layout);
                     }
-                    return $this->evaluate($layoutCached, $data);
+                    return $this->evaluate($layoutCached, $data, $layoutPath);
                 }
             }
 
@@ -121,9 +135,8 @@ class Engine
     // ── Private helpers ────────────────────────────────────────────────────────
 
     /**
-     * Resolve view name to absolute filesystem path.
-     * Supports dot notation: 'pages.home' → 'pages/home'
-     * Tries .lte first, then .php for backward compatibility.
+     * Resolve a dot-notation view name to an absolute filesystem path.
+     * Tries .lte first, then .php for backward-compatibility.
      */
     public function findView(string $view): ?string
     {
@@ -151,47 +164,135 @@ class Engine
         return filemtime($viewPath) > filemtime($cachedPath);
     }
 
-    private function compile(string $viewPath, string $cachedPath): void
+    /**
+     * Compile a .lte source file to a cached PHP file.
+     *
+     * Wraps parse/compile errors with the view name for easier debugging.
+     *
+     * @param string $viewPath    Absolute path to the .lte source file
+     * @param string $cachedPath  Absolute path to write the compiled PHP
+     * @param string $viewName    Dot-notation view name (for error messages)
+     */
+    private function compile(string $viewPath, string $cachedPath, string $viewName): void
     {
         $source = file_get_contents($viewPath);
-        $ast    = $this->parser->parse($source);
-        $php    = $this->compiler->compile($ast);
+
+        try {
+            $ast = $this->parser->parse($source);
+            $php = $this->compiler->compile($ast);
+        } catch (\Throwable $e) {
+            throw new \RuntimeException(
+                "LTE compilation error in view [{$viewName}]: " . $e->getMessage(),
+                0,
+                $e
+            );
+        }
+
         file_put_contents($cachedPath, $php);
     }
 
     /**
-     * Execute compiled PHP file in isolated scope, return output as string.
+     * Execute a compiled PHP file in isolated scope and return output.
      *
-     * Scope isolation — variables visible inside the compiled view:
-     *   - All keys from $data (user-supplied variables)        ✅
-     *   - $__engine (filtered by __ prefix in @include)        ✅
-     *   - $__lte_path (replaces $path — stays internal)        ✅
+     * Error enrichment:
+     *   The Compiler embeds `<?php /* @lte:{LINE} *\/ ?>` markers in the
+     *   generated PHP. If an exception is thrown during evaluation, this
+     *   method reads the compiled file and scans backwards from the error
+     *   line to find the nearest @lte:{N} marker, then re-throws with the
+     *   original .lte line number included in the message.
      *
-     * Variables intentionally removed before require:
-     *   - $data  → unset() — prevents leaking the raw array
-     *   - $path  → renamed to $__lte_path, then unset()
-     *     Both would otherwise appear in get_defined_vars() inside
-     *     the compiled view and leak into @include children.
+     * Scope isolation:
+     *   - $data    → unset before require (prevents leaking the raw array)
+     *   - $path    → renamed to $__lte_path (prevents leaking into child views)
+     *   - $__engine → injected for @include / @component
+     *   Internal variables prefixed __ are excluded by @include's filter.
+     *
+     * @param string $path       Absolute path to the compiled cache file
+     * @param array  $data       Variables to extract into the view scope
+     * @param string             $sourcePath Original .lte file path (for error messages)
+     * @param array<string, mixed> $data
      */
-    private function evaluate(string $path, array $data): string
+    private function evaluate(string $path, array $data, string $sourcePath = ''): string
     {
-        $data['__engine'] = $this;
-        extract($data, EXTR_SKIP);
+        // Move the internal $data parameter into a __ prefixed variable and
+        // unset it BEFORE calling extract(). This prevents a name collision:
+        // if the caller passed ['data' => ...], extract() would create $data
+        // in scope, but then unset($data) below would destroy it.
+        $__lte_vars             = $data;
+        $__lte_vars['__engine'] = $this;
+        unset($data); // remove parameter from scope before extract
 
-        // Remove $data and $path from scope before executing the view.
-        // Without this, get_defined_vars() inside the compiled template
-        // would expose these internal variables to @include children.
-        unset($data);
-        $__lte_path = $path;
+        extract($__lte_vars, EXTR_SKIP);
+        unset($__lte_vars); // remove internal copy — user's $data (if any) remains
+        $__lte_path   = $path;
+        $__lte_source = $sourcePath;
         unset($path);
 
+        // Record the output buffer depth before we open ours.
+        // In the error path we restore to exactly this level — no more, no less.
+        // This prevents PHPUnit 11 from warning about "closed output buffers
+        // other than its own" when tested code deliberately triggers errors.
+        $__lte_ob_level = ob_get_level();
         ob_start();
         try {
             require $__lte_path;
         } catch (\Throwable $e) {
-            ob_end_clean();
-            throw $e;
+            // Clean only the buffers we opened, leaving PHPUnit's own untouched
+            while (ob_get_level() > $__lte_ob_level) {
+                ob_end_clean();
+            }
+
+            // Try to map the PHP error line back to an .lte source line
+            $lteLine = $this->resolveLteLine($__lte_path, $e->getLine());
+
+            $viewLabel = $__lte_source !== ''
+                ? basename($__lte_source)
+                : basename($__lte_path);
+
+            $location = $lteLine !== null
+                ? "[{$viewLabel} line {$lteLine}]"
+                : "[{$viewLabel}]";
+
+            throw new \RuntimeException(
+                "LTE render error in {$location}: " . $e->getMessage(),
+                0,
+                $e
+            );
         }
         return ob_get_clean();
+    }
+
+    /**
+     * Scan a compiled PHP cache file to find the nearest @lte:{N} line marker
+     * at or before $phpLine.
+     *
+     * The Compiler embeds these as: `<?php /* @lte:42 *\/ ?>`
+     * They appear on the compiled line that corresponds to the .lte source line.
+     *
+     * @param  string  $compiledPath  Absolute path to the compiled cache file
+     * @param  int     $phpLine       The line number from the PHP exception
+     * @return int|null  The .lte source line, or null if no marker found
+     */
+    private function resolveLteLine(string $compiledPath, int $phpLine): ?int
+    {
+        if (!file_exists($compiledPath)) {
+            return null;
+        }
+
+        $lines = file($compiledPath);
+        if ($lines === false) {
+            return null;
+        }
+
+        // Scan backwards from the error line to find the nearest marker
+        $limit = min($phpLine - 1, count($lines) - 1);
+
+        for ($i = $limit; $i >= 0; $i--) {
+            if (preg_match('/@lte:(\d+)/', $lines[$i], $m)) {
+                return (int) $m[1];
+            }
+        }
+
+        return null;
     }
 }
