@@ -304,14 +304,14 @@ class CompilerTest extends TestCase
         $this->assertStringContainsString('AssetStack::endScript', $this->compile($this->dir('endscript')));
     }
 
-    public function test_styles_renders_accumulated_styles(): void
+    public function test_styles_emits_deferred_placeholder(): void
     {
-        $this->assertStringContainsString('AssetStack::renderStyles', $this->compile($this->dir('styles')));
+        $this->assertStringContainsString('<!--__LTE_STYLES__-->', $this->compile($this->dir('styles')));
     }
 
-    public function test_scripts_renders_accumulated_scripts(): void
+    public function test_scripts_emits_deferred_placeholder(): void
     {
-        $this->assertStringContainsString('AssetStack::renderScripts', $this->compile($this->dir('scripts')));
+        $this->assertStringContainsString('<!--__LTE_SCRIPTS__-->', $this->compile($this->dir('scripts')));
     }
 
     // ── Stack directives (v0.2) ───────────────────────────────────────────────
