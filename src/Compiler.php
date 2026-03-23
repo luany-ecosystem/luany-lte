@@ -21,6 +21,17 @@ namespace Luany\Lte;
  * Line-number embedding:
  *   Every compiled node starts with a PHP comment `<?php /* @lte:{LINE} *\/ ?>` so that
  *   the Engine can map PHP runtime errors back to the originating .lte source line.
+ *
+ * Asset placeholder strategy (Bug fix — render-order):
+ *   @styles and @scripts are compiled to HTML comment placeholders instead of
+ *   immediate AssetStack::render*() calls. The Engine replaces these markers
+ *   AFTER the complete layout evaluation, ensuring that @style/@script blocks
+ *   from all @include'd components are registered before they are flushed —
+ *   regardless of where @styles/@scripts appear in the layout (head or body).
+ *
+ *   Placeholder format:
+ *     <!--__LTE_STYLES__-->   →  replaced by Engine::resolveAssetPlaceholders()
+ *     <!--__LTE_SCRIPTS__-->  →  replaced by Engine::resolveAssetPlaceholders()
  */
 class Compiler
 {
@@ -194,6 +205,22 @@ class Compiler
                 return "<?php echo \$__engine->render('{$viewName}', {$data}); ?>";
 
             // ── Asset directives ──────────────────────────────────────────────
+            //
+            // @style/@endstyle and @script/@endscript register blocks into
+            // AssetStack immediately when the template is evaluated.
+            //
+            // @styles and @scripts, however, must NOT render the collected
+            // assets inline — they only know about assets registered UP TO
+            // that point in the evaluation order. Because @include directives
+            // inside the layout run AFTER the layout's <head> section, any
+            // component @style blocks would be missed if we called
+            // AssetStack::renderStyles() directly here.
+            //
+            // Fix: emit an HTML comment placeholder. The Engine replaces it
+            // with the actual rendered output AFTER the entire layout (and all
+            // its @include'd components) finishes evaluating.
+            // See Engine::resolveAssetPlaceholders().
+            //
             case 'style':
                 return '<?php \Luany\Lte\AssetStack::startStyle(' . $this->parseArgs($args) . '); ?>';
             case 'endstyle':
@@ -202,10 +229,18 @@ class Compiler
                 return '<?php \Luany\Lte\AssetStack::startScript(' . $this->parseArgs($args) . '); ?>';
             case 'endscript':
                 return '<?php \Luany\Lte\AssetStack::endScript(); ?>';
+
             case 'styles':
-                return '<?php echo \Luany\Lte\AssetStack::renderStyles(); ?>';
+                // Deferred placeholder — resolved by Engine::resolveAssetPlaceholders()
+                // after the complete render cycle, so @include'd component styles
+                // are guaranteed to be registered before this is replaced.
+                return "<?php echo '<!--__LTE_STYLES__-->'; ?>";
+
             case 'scripts':
-                return '<?php echo \Luany\Lte\AssetStack::renderScripts(); ?>';
+                // Deferred placeholder — resolved by Engine::resolveAssetPlaceholders()
+                // after the complete render cycle, so @include'd component scripts
+                // are guaranteed to be registered before this is replaced.
+                return "<?php echo '<!--__LTE_SCRIPTS__-->'; ?>";
 
             // ── Stack directives ──────────────────────────────────────────────
             case 'push':

@@ -9,7 +9,9 @@ namespace Luany\Lte;
  *   1. SectionStack::reset() + AssetStack::reset() + ComponentStack::reset() (root only)
  *   2. Compile + evaluate child view  (populates sections/assets, sets layout)
  *   3. If @extends was used → compile + evaluate layout (consumes sections, renders assets)
- *   4. Return final HTML string
+ *   4. Resolve asset placeholders → replace <!--__LTE_STYLES__--> / <!--__LTE_SCRIPTS__-->
+ *      with the fully-collected AssetStack output (see resolveAssetPlaceholders())
+ *   5. Return final HTML string
  *
  * Phase 5 additions:
  *   - ComponentStack::reset() called at root render start
@@ -17,6 +19,20 @@ namespace Luany\Lte;
  *     the .lte source line number (extracted from @lte:{N} PHP comments
  *     embedded by the Compiler)
  *   - compile() wraps parser/compiler errors with view name context
+ *
+ * Asset placeholder resolution (Bug fix — render order):
+ *   The Compiler emits HTML comment placeholders for @styles and @scripts
+ *   instead of calling AssetStack::render*() directly. This decouples the
+ *   point where the placeholder appears in the HTML from the point where
+ *   the assets are collected. resolveAssetPlaceholders() is called once,
+ *   after the complete layout evaluation, performing a single str_replace
+ *   over the final HTML string. This guarantees that @style/@script blocks
+ *   registered by any @include'd component — regardless of its position in
+ *   the layout — are present in the AssetStack before they are flushed.
+ *
+ *   Without this fix, placing @styles in <head> would output an empty or
+ *   partial <style> block because @include'd component styles had not yet
+ *   been registered at that point in the linear evaluation order.
  */
 class Engine
 {
@@ -49,9 +65,8 @@ class Engine
     /**
      * Render a view and return the final HTML string.
      *
-     * @param string $view  Dot-notation view name (e.g. 'pages.home')
-     * @param array  $data  Variables to pass into the view
-     * @param  array<string, mixed>  $data    Variables to expose in the view
+     * @param string               $view  Dot-notation view name (e.g. 'pages.home')
+     * @param array<string, mixed> $data  Variables to expose in the view
      * @throws \Exception If the view or layout cannot be found, or compilation fails
      */
     public function render(string $view, array $data = []): string
@@ -86,6 +101,7 @@ class Engine
 
             if ($isRoot) {
                 $layout = SectionStack::getLayout();
+
                 if ($layout !== null) {
                     $layoutPath = $this->findView($layout);
                     if (!$layoutPath) {
@@ -95,10 +111,23 @@ class Engine
                     if ($this->needsRecompile($layoutPath, $layoutCached)) {
                         $this->compile($layoutPath, $layoutCached, $layout);
                     }
-                    return $this->evaluate($layoutCached, $data, $layoutPath);
+
+                    // Evaluate the full layout — this runs all @include directives,
+                    // registering every component's @style/@script blocks into AssetStack.
+                    // Only AFTER this returns do we replace the placeholders emitted by
+                    // @styles and @scripts, ensuring a complete asset collection.
+                    return $this->resolveAssetPlaceholders(
+                        $this->evaluate($layoutCached, $data, $layoutPath)
+                    );
                 }
+
+                // Root view without a layout — still resolve any @styles/@scripts
+                // the author may have placed directly in the view (edge case but valid).
+                return $this->resolveAssetPlaceholders($output);
             }
 
+            // Non-root renders (depth > 0): return raw output; the root caller
+            // is responsible for resolving placeholders after the full cycle.
             return $output;
 
         } finally {
@@ -207,10 +236,9 @@ class Engine
      *   - $__engine → injected for @include / @component
      *   Internal variables prefixed __ are excluded by @include's filter.
      *
-     * @param string $path       Absolute path to the compiled cache file
-     * @param array  $data       Variables to extract into the view scope
-     * @param string             $sourcePath Original .lte file path (for error messages)
-     * @param array<string, mixed> $data
+     * @param string               $path        Absolute path to the compiled cache file
+     * @param array<string, mixed> $data        Variables to extract into the view scope
+     * @param string               $sourcePath  Original .lte file path (for error messages)
      */
     private function evaluate(string $path, array $data, string $sourcePath = ''): string
     {
@@ -260,6 +288,50 @@ class Engine
             );
         }
         return ob_get_clean();
+    }
+
+    /**
+     * Replace @styles and @scripts placeholders with the actual rendered
+     * asset blocks collected by AssetStack during the full render cycle.
+     *
+     * Design rationale:
+     *   The Compiler emits HTML comment markers — not direct PHP calls — for
+     *   @styles and @scripts. These markers survive ob_start/ob_get_clean
+     *   intact and are batch-replaced here via str_replace, which is O(n)
+     *   over the final HTML string and performs a single pass over it.
+     *
+     *   This method is called exclusively at the root render level, AFTER:
+     *     (a) the child view has been fully evaluated, AND
+     *     (b) the layout (including all its @include'd components) has been
+     *         fully evaluated.
+     *   At that point AssetStack holds the complete, deduplicated set of all
+     *   @style and @script blocks from every view in the render tree.
+     *
+     *   Calling renderStyles() / renderScripts() here — rather than inline
+     *   during layout evaluation — is what guarantees that component styles
+     *   are present even when @styles appears in <head>, before the component
+     *   @include directives have run.
+     *
+     * Placeholder strings:
+     *   <!--__LTE_STYLES__-->   → AssetStack::renderStyles()
+     *   <!--__LTE_SCRIPTS__-->  → AssetStack::renderScripts()
+     *
+     * Edge cases:
+     *   - @styles / @scripts may appear zero, one, or multiple times in the
+     *     layout. str_replace handles all occurrences in one call.
+     *   - Non-root renders (depth > 0) bypass this method; they return their
+     *     raw output including any placeholders, which the root caller resolves.
+     *
+     * @param string $html  The fully-evaluated HTML string from the root render
+     * @return string       HTML with asset placeholders replaced by actual output
+     */
+    private function resolveAssetPlaceholders(string $html): string
+    {
+        return str_replace(
+            ['<!--__LTE_STYLES__-->', '<!--__LTE_SCRIPTS__-->'],
+            [AssetStack::renderStyles(), AssetStack::renderScripts()],
+            $html
+        );
     }
 
     /**
