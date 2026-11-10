@@ -213,11 +213,10 @@ class CompilerTest extends TestCase
 
     // ── Auth guards ───────────────────────────────────────────────────────────
 
-    public function test_auth_checks_session(): void
+    public function test_auth_checks_runtime_resolver(): void
     {
         $out = $this->compile($this->dir('auth'));
-        $this->assertStringContainsString('isset', $out);
-        $this->assertStringContainsString("'user_id'", $out);
+        $this->assertStringContainsString('Runtime::check()', $out);
     }
 
     public function test_endauth_closes_if(): void
@@ -228,7 +227,7 @@ class CompilerTest extends TestCase
     public function test_guest_is_negation_of_auth(): void
     {
         $guest = $this->compile($this->dir('guest'));
-        $this->assertStringContainsString('!isset', $guest);
+        $this->assertStringContainsString('!\\Luany\\Lte\\Runtime::check()', $guest);
     }
 
     public function test_endguest_closes_if(): void

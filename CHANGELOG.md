@@ -9,6 +9,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Security
+- `@dump` / `@dd` are no-ops when `Runtime::setDebug(false)` (luany/framework wires this to `APP_DEBUG`). `@auth` / `@guest` go through `Runtime::check()`, configurable with `Runtime::setAuthResolver()` (default: `$_SESSION['user_id']`). (#14)
+- `@csrf` emits the `_token` field and uses `csrf_token()` when available (session key `_csrf_token`), matching luany/framework.
 - Inline `@section('name', $value)` values and `@yield('name', $default)` defaults are now HTML-escaped (block sections are unchanged). `@class` escapes its class list. All escaping uses `ENT_QUOTES | ENT_SUBSTITUTE`, so invalid UTF-8 no longer renders as an empty string. (#11)
 - Compiled cache: writes are atomic (temp file + `rename()`); the default cache directory is now a per-user `sys_get_temp_dir()/lte_cache_<uid>` created `0700` instead of the shared `/tmp/lte_cache`, and is refused when it is a symlink or owned by another user. (#12)
 - View/section names are compiled as PHP literals, so a quote in a name can no longer break out of the generated code. (#6)

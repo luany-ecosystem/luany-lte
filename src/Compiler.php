@@ -295,9 +295,9 @@ class Compiler
                     . $methodArg . '))); ?>">';
 
             // ── Auth guards ───────────────────────────────────────────────────
-            case 'auth':    return "<?php if(isset(\$_SESSION['user_id'])): ?>";
+            case 'auth':    return '<?php if(\\Luany\\Lte\\Runtime::check()): ?>';
             case 'endauth': return '<?php endif; ?>';
-            case 'guest':   return "<?php if(!isset(\$_SESSION['user_id'])): ?>";
+            case 'guest':   return '<?php if(!\\Luany\\Lte\\Runtime::check()): ?>';
             case 'endguest':return '<?php endif; ?>';
 
             // ── Layout system ─────────────────────────────────────────────────
@@ -464,9 +464,9 @@ class Compiler
 
             // ── Debug helpers ─────────────────────────────────────────────────
             case 'dump':
-                return "<?php var_dump({$args}); ?>";
+                return "<?php if (\\Luany\\Lte\\Runtime::debug()) { var_dump({$args}); } ?>";
             case 'dd':
-                return "<?php var_dump({$args}); die; ?>";
+                return "<?php if (\\Luany\\Lte\\Runtime::debug()) { var_dump({$args}); die; } ?>";
 
             // ── @isset / @endisset ────────────────────────────────────────────
             case 'isset':
