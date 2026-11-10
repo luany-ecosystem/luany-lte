@@ -43,9 +43,18 @@ class Parser
         $nodes = [];
 
         while ($this->position < $this->length) {
-            $node = $this->parseNext();
+            $before = $this->position;
+            $node   = $this->parseNext();
             if ($node !== null) {
                 $nodes[] = $node;
+            }
+
+            // Safety net: every iteration must consume input. A parser that
+            // stalls would otherwise spin forever and take the worker down.
+            if ($this->position <= $before) {
+                throw new \RuntimeException(
+                    "LTE parser made no progress at offset {$before} (line {$this->line})."
+                );
             }
         }
 
@@ -233,13 +242,10 @@ class Parser
 
         while ($this->position < $this->length) {
             $char = $this->source[$this->position];
-            $next = $this->position + 1 < $this->length
-                ? $this->source[$this->position + 1]
-                : '';
 
-            // Stop at any token start
-            if ($char === '@' ||
-                ($char === '{' && ($next === '{' || $next === '!'))) {
+            // Stop at a real token start — but always consume at least one
+            // character so that a lone '{!' or similar can never stall the parser.
+            if ($this->position > $start && $this->isTokenStart()) {
                 break;
             }
 
@@ -256,6 +262,26 @@ class Parser
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
+
+    /**
+     * Whether a token ({{, {!!, @) starts at the current position.
+     * Must agree exactly with the dispatch in parseNext().
+     */
+    private function isTokenStart(): bool
+    {
+        $char = $this->source[$this->position];
+
+        if ($char === '@') {
+            return true;
+        }
+
+        if ($char === '{') {
+            return substr($this->source, $this->position, 2) === '{{'
+                || substr($this->source, $this->position, 3) === '{!!';
+        }
+
+        return false;
+    }
 
     /**
      * Check if the current position matches $pattern.
