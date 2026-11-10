@@ -77,4 +77,38 @@ class HardeningTest extends TestCase
         $ast = (new Parser())->parse('{!x');
         $this->assertSame([['type' => 'text', 'content' => '{!x', 'line' => 1]], $ast);
     }
+
+    // ── #2 newlines after echoes/directives ───────────────────────────────────
+
+    public function test_newlines_between_echoes_are_preserved(): void
+    {
+        $this->assertSame("A\nB\n", $this->renderString("{{ \$a }}\n{{ \$b }}\n", ['a' => 'A', 'b' => 'B']));
+    }
+
+    public function test_newlines_after_directives_are_preserved(): void
+    {
+        $src = "<pre>\n@if(true)\nline1\n@endif\nline2\n</pre>";
+        $this->assertSame("<pre>\n\nline1\n\nline2\n</pre>", $this->renderString($src));
+    }
+
+    public function test_blank_lines_and_crlf_are_preserved(): void
+    {
+        $this->assertSame("x\n\n\ny", $this->renderString("{{ 'x' }}\n\n\n{!! 'y' !!}"));
+        $this->assertSame("x\r\ny", $this->renderString("{{ 'x' }}\r\ny"));
+    }
+
+    public function test_newline_after_php_block_and_comment_is_preserved(): void
+    {
+        $this->assertSame("\n1\n", $this->renderString("@php \$n = 1; @endphp\n{{ \$n }}\n"));
+        $this->assertSame("a\nb", $this->renderString("a{{-- c --}}\nb"));
+    }
+
+    public function test_plain_text_email_layout_is_exact(): void
+    {
+        $src = "Hello {{ \$name }},\n\n@foreach(\$items as \$i)\n- {{ \$i }}\n@endforeach\nBye";
+        $this->assertSame(
+            "Hello Ana,\n\n\n- a\n\n- b\n\nBye",
+            $this->renderString($src, ['name' => 'Ana', 'items' => ['a', 'b']])
+        );
+    }
 }

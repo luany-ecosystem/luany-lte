@@ -54,37 +54,62 @@ class Compiler
 
         $php = '';
         foreach ($ast as $node) {
-            $php .= $this->compileNode($node);
+            foreach ($this->compileNode($node) as $piece) {
+                $php = $this->append($php, $piece);
+            }
         }
         return $php;
     }
 
-    /** @param array<string, mixed> $node */
-    private function compileNode(array $node): string
+    /**
+     * Concatenate a compiled piece, preserving template whitespace.
+     *
+     * PHP swallows a single newline ("\n" or "\r\n") that immediately follows
+     * a closing `?>` tag. Whenever a piece starting with a newline is appended
+     * right after a `?>`, an extra "\n" is inserted for PHP to consume so the
+     * rendered output keeps the template's newlines exactly.
+     */
+    private function append(string $php, string $piece): string
+    {
+        if ($piece === '') {
+            return $php;
+        }
+
+        if (($piece[0] === "\n" || str_starts_with($piece, "\r\n")) && str_ends_with($php, '?>')) {
+            $php .= "\n";
+        }
+
+        return $php . $piece;
+    }
+
+    /**
+     * @param array<string, mixed> $node
+     * @return list<string>  Compiled pieces (line marker first, if any)
+     */
+    private function compileNode(array $node): array
     {
         $line   = $node['line'] ?? null;
         $marker = ($line !== null) ? "<?php /* @lte:{$line} */ ?>" : '';
 
         switch ($node['type']) {
             case 'text':
-                // Text nodes: emit the line marker only if there is actual content
-                return $marker . $node['content'];
+                return [$marker, $node['content']];
 
             case 'echo':
-                return $marker
-                    . "<?php echo htmlspecialchars((string)({$node['expression']} ?? ''), ENT_QUOTES, 'UTF-8'); ?>";
+                return [$marker,
+                    "<?php echo htmlspecialchars((string)({$node['expression']} ?? ''), ENT_QUOTES, 'UTF-8'); ?>"];
 
             case 'raw_echo':
-                return $marker . "<?php echo {$node['expression']}; ?>";
+                return [$marker, "<?php echo {$node['expression']}; ?>"];
 
             case 'php_block':
-                return $marker . "<?php\n{$node['content']}\n?>";
+                return [$marker, "<?php\n{$node['content']}\n?>"];
 
             case 'directive':
-                return $marker . $this->compileDirective($node);
+                return [$marker, $this->compileDirective($node)];
 
             default:
-                return '';
+                return [];
         }
     }
 
