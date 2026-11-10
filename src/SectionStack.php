@@ -141,6 +141,25 @@ class SectionStack
         return self::$stacks[$name] ?? '';
     }
 
+    // ── Unwinding ─────────────────────────────────────────────────────────────
+
+    /**
+     * Number of currently open @section/@push blocks.
+     */
+    public static function openDepth(): int
+    {
+        return count(self::$open);
+    }
+
+    /**
+     * Forget open blocks above $depth after a render failed. Their output
+     * buffers have already been closed by the Engine.
+     */
+    public static function unwindTo(int $depth): void
+    {
+        self::$open = array_slice(self::$open, 0, max(0, $depth));
+    }
+
     // ── Internals ─────────────────────────────────────────────────────────────
 
     private static function open(string $type, string $name): void

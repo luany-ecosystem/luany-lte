@@ -85,6 +85,13 @@ class Engine
             }
         }
 
+        // Snapshot of the global render state, restored if this render fails so
+        // that a throwing view/component cannot leak frames or buffers into the
+        // next render (long-running workers: RoadRunner, Swoole, FrankenPHP).
+        $obLevel        = ob_get_level();
+        $componentDepth = ComponentStack::depth();
+        $sectionDepth   = SectionStack::openDepth();
+
         self::$renderDepth++;
 
         try {
@@ -131,6 +138,16 @@ class Engine
             // is responsible for resolving placeholders after the full cycle.
             return $output;
 
+        } catch (\Throwable $e) {
+            while (ob_get_level() > $obLevel) {
+                ob_end_clean();
+            }
+            ComponentStack::unwindTo($componentDepth);
+            SectionStack::unwindTo($sectionDepth);
+            if ($isRoot) {
+                AssetStack::reset();
+            }
+            throw $e;
         } finally {
             self::$renderDepth--;
         }

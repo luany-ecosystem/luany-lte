@@ -77,6 +77,25 @@ class ComponentStack
      * Whether there are any active component frames on the stack.
      * Used by Engine::render() to avoid resetting mid-resolution state.
      */
+    /**
+     * Number of open component frames.
+     */
+    public static function depth(): int
+    {
+        return count(self::$stack);
+    }
+
+    /**
+     * Drop frames above $depth after a render failed. Their output buffers
+     * have already been closed by the Engine, so only the frames are removed.
+     */
+    public static function unwindTo(int $depth): void
+    {
+        while (count(self::$stack) > max(0, $depth)) {
+            array_pop(self::$stack);
+        }
+    }
+
     public static function isActive(): bool
     {
         return !empty(self::$stack);

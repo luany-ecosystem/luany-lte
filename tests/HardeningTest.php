@@ -358,4 +358,41 @@ class HardeningTest extends TestCase
         $this->assertSame($level + 1, ob_get_level());
         $this->assertSame('keep', ob_get_clean());
     }
+
+    // ── #10 unwinding on exceptions ───────────────────────────────────────────
+
+    public function test_throwing_component_does_not_leak_stack_or_buffers(): void
+    {
+        $this->write('components/box.lte', '<b>{{ $slot }}</b>');
+        $this->write('bad.lte', "@component('components.box')@component('components.box'){{ (function () { throw new \\LogicException('boom'); })() }}@endcomponent@endcomponent");
+        $this->write('good.lte', "@component('components.box')ok@endcomponent");
+
+        $level = ob_get_level();
+        try {
+            $this->engine->render('bad');
+            $this->fail('Expected exception');
+        } catch (\RuntimeException $e) {
+            $this->assertInstanceOf(\LogicException::class, $e->getPrevious());
+        }
+
+        $this->assertSame($level, ob_get_level());
+        $this->assertFalse(\Luany\Lte\ComponentStack::isActive());
+        $this->assertSame(0, \Luany\Lte\SectionStack::openDepth());
+        $this->assertSame('<b>ok</b>', $this->engine->render('good'));
+    }
+
+    public function test_throwing_section_body_unwinds_section_stack(): void
+    {
+        $this->write('layouts/s.lte', '@yield("c")');
+        $this->write('bad.lte', "@extends('layouts.s')@section('c')@push('x'){{ (function () { throw new \\LogicException('boom'); })() }}@endpush@endsection");
+        $level = ob_get_level();
+        try {
+            $this->engine->render('bad');
+            $this->fail('Expected exception');
+        } catch (\RuntimeException) {
+        }
+        $this->assertSame($level, ob_get_level());
+        $this->assertSame(0, \Luany\Lte\SectionStack::openDepth());
+        $this->assertSame('fine', $this->renderString("@extends('layouts.s')@section('c')fine@endsection"));
+    }
 }
