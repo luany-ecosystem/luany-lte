@@ -167,4 +167,50 @@ class HardeningTest extends TestCase
         $this->engine->getCompiler()->directive('hello', fn (?string $a): string => "<?php echo 'Hello ' . {$a}; ?>");
         $this->assertSame('Hello Ana @world', $this->renderString("@hello('Ana') @world"));
     }
+
+    // ── #5 string-aware scanning ──────────────────────────────────────────────
+
+    public function test_echo_containing_closing_delimiter_in_string(): void
+    {
+        $this->assertSame('}} x', $this->renderString("{{ '}}' }} x"));
+        $this->assertSame('a!!}b', $this->renderString("{!! 'a!!}' !!}b"));
+        $this->assertSame('1', $this->renderString("{{ ['k' => ['v' => 1]]['k']['v'] }}"));
+    }
+
+    public function test_json_with_nested_array_argument(): void
+    {
+        $this->assertSame('{"a":1,"b":2}', $this->renderString("@json(['a' => 1, 'b' => 2])"));
+        $this->assertSame("[\n    1,\n    2\n]", $this->renderString('@json([1, 2], JSON_PRETTY_PRINT)'));
+    }
+
+    public function test_include_with_multi_key_data_array(): void
+    {
+        $this->write('partial.lte', '{{ $a }}-{{ $b }}');
+        $this->assertSame('1-2', $this->renderString("@include('partial', ['a' => 1, 'b' => 2])"));
+    }
+
+    public function test_inline_section_with_function_call_value(): void
+    {
+        $this->write('layout.lte', '<title>@yield(\'t\')</title>');
+        $this->assertSame(
+            '<title>a, b</title>',
+            $this->renderString("@extends('layout')@section('t', implode(', ', ['a', 'b']))")
+        );
+    }
+
+    public function test_directive_args_with_parens_and_quotes_in_strings(): void
+    {
+        $this->assertSame('ok', $this->renderString("@if(\$x === ')' || in_array(\$x, ['(', \"\\\")\"]))ok@endif", ['x' => ')']));
+    }
+
+    public function test_scanner_split_and_literal_detection(): void
+    {
+        $this->assertSame(
+            ["'x'", "['a' => 1, 'b' => f(2, 3)]", '"c,d"'],
+            \Luany\Lte\ExpressionScanner::split("'x', ['a' => 1, 'b' => f(2, 3)], \"c,d\"")
+        );
+        $this->assertTrue(\Luany\Lte\ExpressionScanner::isStringLiteral("'it\\'s'"));
+        $this->assertFalse(\Luany\Lte\ExpressionScanner::isStringLiteral("'a' . 'b'"));
+        $this->assertFalse(\Luany\Lte\ExpressionScanner::isStringLiteral('$view'));
+    }
 }

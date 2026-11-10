@@ -396,74 +396,43 @@ class Compiler
 
     private function parseArgs(?string $args): string
     {
-        if ($args === null || trim($args) === '') {
+        $parts = ExpressionScanner::split($args);
+        $parts = array_values(array_filter(
+            array_map(fn (string $p): string => trim($p, '\'" '), $parts),
+            fn (string $p): bool => $p !== ''
+        ));
+
+        if ($parts === []) {
             return '[]';
         }
 
-        $args  = trim($args, '() ');
-        $parts = [];
-        $token = '';
-        $inS   = false;
-        $inD   = false;
-
-        for ($i = 0, $len = strlen($args); $i < $len; $i++) {
-            $ch = $args[$i];
-
-            if ($ch === "'" && !$inD) { $inS = !$inS; $token .= $ch; continue; }
-            if ($ch === '"' && !$inS) { $inD = !$inD; $token .= $ch; continue; }
-
-            if ($ch === ',' && !$inS && !$inD) {
-                $parts[] = trim($token, '\'" ');
-                $token   = '';
-                continue;
-            }
-
-            $token .= $ch;
-        }
-
-        if (trim($token) !== '') {
-            $parts[] = trim($token, '\'" ');
-        }
-
-        if (empty($parts)) {
-            return '[]';
-        }
-
-        return '[' . implode(',', array_map(fn($p) => "'{$p}'", $parts)) . ']';
+        return '[' . implode(',', array_map(fn (string $p): string => var_export($p, true), $parts)) . ']';
     }
 
     private function hasInlineValue(string $args): bool
     {
-        $inSingle = $inDouble = false;
-        for ($i = 0, $len = strlen($args); $i < $len; $i++) {
-            $ch = $args[$i];
-            if ($ch === "'" && !$inDouble) { $inSingle = !$inSingle; continue; }
-            if ($ch === '"' && !$inSingle) { $inDouble = !$inDouble; continue; }
-            if ($ch === ',' && !$inSingle && !$inDouble) return true;
-        }
-        return false;
+        return count(ExpressionScanner::split($args)) > 1;
     }
 
-    /** @return array{0: string, 1: string|null} */
+    /**
+     * Split "name, value" at the first top-level comma (strings and nested
+     * brackets aware). The name is unquoted; the value is returned verbatim.
+     *
+     * @return array{0: string, 1: string}
+     */
     private function parseSectionArgs(string $args): array
     {
-        $inSingle = $inDouble = false;
-        $splitAt  = -1;
-        for ($i = 0, $len = strlen($args); $i < $len; $i++) {
-            $ch = $args[$i];
-            if ($ch === "'" && !$inDouble) { $inSingle = !$inSingle; continue; }
-            if ($ch === '"' && !$inSingle) { $inDouble = !$inDouble; continue; }
-            if ($ch === ',' && !$inSingle && !$inDouble) { $splitAt = $i; break; }
-        }
-        if ($splitAt === -1) {
+        $parts = ExpressionScanner::split($args);
+        if (count($parts) < 2) {
             return [trim($args, '\'" '), "''"];
         }
-        $name  = trim(substr($args, 0, $splitAt), '\'" ');
-        $value = trim(substr($args, $splitAt + 1));
+
+        $name  = trim(array_shift($parts), '\'" ');
+        $value = implode(', ', $parts);
         return [$name, $value];
     }
 
-    /** @return array{0: string, 1: string|null} */
+    /** @return array{0: string, 1: string} */
     private function parseYieldArgs(?string $args): array
     {
         if ($args === null) return ['', "''"];
@@ -485,30 +454,9 @@ class Compiler
         }
 
         if ($this->hasInlineValue($args)) {
-            // Two arguments: 'view.name', [...]
-            $depth   = 0;
-            $splitAt = -1;
-            $inS = $inD = false;
-
-            for ($i = 0, $len = strlen($args); $i < $len; $i++) {
-                $ch = $args[$i];
-                if ($ch === "'" && !$inD) { $inS = !$inS; continue; }
-                if ($ch === '"' && !$inS) { $inD = !$inD; continue; }
-                if (!$inS && !$inD) {
-                    if ($ch === '[' || $ch === '(') $depth++;
-                    elseif ($ch === ']' || $ch === ')') $depth--;
-                    elseif ($ch === ',' && $depth === 0) { $splitAt = $i; break; }
-                }
-            }
-
-            if ($splitAt !== -1) {
-                $viewPart = trim(substr($args, 0, $splitAt), '\'" ');
-                $dataPart = trim(substr($args, $splitAt + 1));
-                return [$viewPart, $dataPart];
-            }
+            return $this->parseSectionArgs($args);
         }
 
-        // Single argument: just 'view.name'
         return [trim($args, '\'" '), '[]'];
     }
 

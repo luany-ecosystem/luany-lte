@@ -89,13 +89,7 @@ class Parser
                 $nodes[] = $node;
             }
 
-            // Safety net: every iteration must consume input. A parser that
-            // stalls would otherwise spin forever and take the worker down.
-            if ($this->position <= $before) {
-                throw new \RuntimeException(
-                    "LTE parser made no progress at offset {$before} (line {$this->line})."
-                );
-            }
+            $this->assertProgress($before);
         }
 
         return $nodes;
@@ -149,8 +143,8 @@ class Parser
     private function parseEcho(): array
     {
         $startLine = $this->line;
-        $end = strpos($this->source, '}}', $this->position);
-        if ($end === false) {
+        $end = $this->findClosing('}}');
+        if ($end === null) {
             throw new \RuntimeException(
                 "Unclosed echo tag on line {$startLine}."
             );
@@ -169,8 +163,8 @@ class Parser
     private function parseRawEcho(): array
     {
         $startLine = $this->line;
-        $end = strpos($this->source, '!!}', $this->position);
-        if ($end === false) {
+        $end = $this->findClosing('!!}');
+        if ($end === null) {
             throw new \RuntimeException(
                 "Unclosed raw echo tag on line {$startLine}."
             );
@@ -239,60 +233,36 @@ class Parser
 
     private function parseDirectiveArgs(int $startLine): string
     {
-        $this->position++; // skip opening '('
+        $start = $this->position + 1; // skip opening '('
+        $end   = ExpressionScanner::find($this->source, $start, ')');
 
-        $depth = 1;
-        $start = $this->position;
-
-        while ($this->position < $this->length && $depth > 0) {
-            $char = $this->source[$this->position];
-
-            if ($char === '(') {
-                $depth++;
-            } elseif ($char === ')') {
-                $depth--;
-            } elseif ($char === "'" || $char === '"') {
-                $this->skipString($char);
-                continue;
-            } elseif ($char === "\n") {
-                $this->line++;
-            }
-
-            $this->position++;
-        }
-
-        if ($depth !== 0) {
+        if ($end === null) {
             throw new \RuntimeException(
                 "Unclosed directive arguments on line {$startLine}."
             );
         }
 
-        return trim(substr($this->source, $start, $this->position - $start - 1));
+        $this->advanceLinesTo($end + 1);
+        $this->position = $end + 1;
+
+        return trim(substr($this->source, $start, $end - $start));
     }
 
-    private function skipString(string $quote): void
+    /**
+     * Locate the closing delimiter of an echo, ignoring delimiters that appear
+     * inside string literals or nested brackets (`{{ '}}' }}`). Falls back to
+     * the first plain occurrence when the expression is not well-formed PHP
+     * (e.g. an unbalanced quote), preserving the historical behaviour.
+     */
+    private function findClosing(string $delimiter): ?int
     {
-        $this->position++; // skip opening quote
-
-        while ($this->position < $this->length) {
-            $char = $this->source[$this->position];
-
-            if ($char === '\\') {
-                $this->position += 2;
-                continue;
-            }
-
-            if ($char === "\n") {
-                $this->line++;
-            }
-
-            if ($char === $quote) {
-                $this->position++;
-                return;
-            }
-
-            $this->position++;
+        $end = ExpressionScanner::find($this->source, $this->position, $delimiter);
+        if ($end !== null) {
+            return $end;
         }
+
+        $plain = strpos($this->source, $delimiter, $this->position);
+        return $plain === false ? null : $plain;
     }
 
     // ── Escapes @@ and @{{ ... }} ──────────────────────────────────────────────
@@ -368,6 +338,19 @@ class Parser
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
+
+    /**
+     * Safety net: every parse iteration must consume input. A parser that
+     * stalls would otherwise spin forever and take the worker down.
+     */
+    private function assertProgress(int $before): void
+    {
+        if ($this->position <= $before) {
+            throw new \RuntimeException(
+                "LTE parser made no progress at offset {$before} (line {$this->line})."
+            );
+        }
+    }
 
     private static function isClosingDirective(string $name): bool
     {
