@@ -515,4 +515,46 @@ class HardeningTest extends TestCase
         $engine->getCompiler()->directive('shout', fn (string $a): string => "<?php echo strtoupper({$a}); ?>");
         $this->assertSame('HI', $engine->render('d'));
     }
+
+    // ── #7 multi-level layouts ────────────────────────────────────────────────
+
+    public function test_three_level_layout_chain(): void
+    {
+        $this->write('layouts/base.lte', '<html><title>@yield("title", "Site")</title><body>@yield("body")</body></html>');
+        $this->write('layouts/app.lte', "@extends('layouts.base')@section('body')<nav/>@yield('content')@endsection");
+        $src = "@extends('layouts.app')@section('title', 'Home')@section('content')<p>hi</p>@endsection";
+
+        $this->assertSame(
+            '<html><title>Home</title><body><nav/><p>hi</p></body></html>',
+            $this->renderString($src)
+        );
+    }
+
+    public function test_child_section_wins_over_parent_layout_default(): void
+    {
+        $this->write('layouts/base.lte', '[@yield("side")]');
+        $this->write('layouts/mid.lte', "@extends('layouts.base')@section('side')mid-default@endsection");
+
+        $this->assertSame('[child]', $this->renderString("@extends('layouts.mid')@section('side')child@endsection"));
+        $this->assertSame('[mid-default]', $this->renderString("@extends('layouts.mid')"));
+    }
+
+    public function test_extends_inside_partial_does_not_hijack_layout(): void
+    {
+        $this->write('layouts/page.lte', '<page>@yield("c")</page>');
+        $this->write('layouts/other.lte', '<other>@yield("c")</other>');
+        $this->write('partials/p.lte', "@extends('layouts.other')partial");
+
+        $this->assertSame('<page>[partial]</page>', $this->renderString("@extends('layouts.page')@section('c')[@include('partials.p')]@endsection"));
+    }
+
+    public function test_circular_extends_throws(): void
+    {
+        $this->write('layouts/a.lte', "@extends('layouts.b')");
+        $this->write('layouts/b.lte', "@extends('layouts.a')");
+
+        $this->expectException(\Luany\Lte\TemplateSyntaxException::class);
+        $this->expectExceptionMessage('Circular @extends detected');
+        $this->renderString("@extends('layouts.a')");
+    }
 }

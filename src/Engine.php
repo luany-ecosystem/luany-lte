@@ -116,12 +116,27 @@ class Engine
                 $this->compile($viewPath, $cachedPath, $view);
             }
 
-            $output = $this->evaluate($cachedPath, $data, $viewPath);
+            // @extends is only honoured for the top-level view: a partial or
+            // component that declares a layout must not hijack the page's.
+            $outerLayout = SectionStack::getLayout();
+            $output      = $this->evaluate($cachedPath, $data, $viewPath);
+            if (!$isRoot) {
+                SectionStack::setLayout($outerLayout);
+            }
 
             if ($isRoot) {
-                $layout = SectionStack::getLayout();
+                // Resolve the layout chain: child → layout → parent layout ...
+                // Each level may @extends another; sections defined at a lower
+                // level (closer to the child) take precedence.
+                $seen = [];
+                while (($layout = SectionStack::getLayout()) !== null) {
+                    if (isset($seen[$layout])) {
+                        throw new TemplateSyntaxException(
+                            'Circular @extends detected: ' . implode(' → ', array_keys($seen)) . " → {$layout}"
+                        );
+                    }
+                    $seen[$layout] = true;
 
-                if ($layout !== null) {
                     $layoutPath = $this->findView($layout);
                     if (!$layoutPath) {
                         throw new \Exception("Layout [{$layout}] not found in [{$this->viewsPath}]");
@@ -131,17 +146,17 @@ class Engine
                         $this->compile($layoutPath, $layoutCached, $layout);
                     }
 
-                    // Evaluate the full layout — this runs all @include directives,
+                    SectionStack::setLayout(null);
+                    SectionStack::enterLayout();
+
+                    // Evaluate the layout — this runs all @include directives,
                     // registering every component's @style/@script blocks into AssetStack.
-                    // Only AFTER this returns do we replace the placeholders emitted by
-                    // @styles and @scripts, ensuring a complete asset collection.
-                    return $this->resolveAssetPlaceholders(
-                        $this->evaluate($layoutCached, $data, $layoutPath)
-                    );
+                    $output = $this->evaluate($layoutCached, $data, $layoutPath);
                 }
 
-                // Root view without a layout — still resolve any @styles/@scripts
-                // the author may have placed directly in the view (edge case but valid).
+                // Only AFTER the outermost layout returns do we replace the
+                // placeholders emitted by @styles and @scripts, ensuring a
+                // complete asset collection.
                 return $this->resolveAssetPlaceholders($output);
             }
 

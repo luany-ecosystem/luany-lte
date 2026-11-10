@@ -35,6 +35,16 @@ class SectionStack
     private static array   $sections = [];
     private static ?string $layout   = null;
 
+    /**
+     * Layout nesting level being evaluated: 0 = the rendered view, 1 = its
+     * layout, 2 = the layout's parent, ... A section already defined at a
+     * lower level (closer to the child view) is never overwritten.
+     */
+    private static int $level = 0;
+
+    /** @var array<string, int> */
+    private static array $sectionLevels = [];
+
     // ── Push/Stack (v0.2) ──────────────────────────────────────────────────────
     /** @var array<string, string> */
     private static array $stacks = [];
@@ -55,17 +65,27 @@ class SectionStack
      */
     public static function reset(): void
     {
-        self::$sections = [];
-        self::$layout   = null;
+        self::$sections      = [];
+        self::$sectionLevels = [];
+        self::$level         = 0;
+        self::$layout        = null;
         self::$stacks   = [];
         self::$open     = [];
     }
 
     // ── Layout ────────────────────────────────────────────────────────────────
 
-    public static function setLayout(string $layout): void
+    public static function setLayout(?string $layout): void
     {
         self::$layout = $layout;
+    }
+
+    /**
+     * Called by the Engine before evaluating each (parent) layout.
+     */
+    public static function enterLayout(): void
+    {
+        self::$level++;
     }
 
     public static function getLayout(): ?string
@@ -91,12 +111,24 @@ class SectionStack
      */
     public static function end(): void
     {
-        self::$sections[self::close('section', '@endsection')] = (string) ob_get_clean();
+        $name    = self::close('section', '@endsection');
+        $content = (string) ob_get_clean();
+        self::store($name, $content);
     }
 
     public static function set(string $name, string $value): void
     {
-        self::$sections[$name] = $value;
+        self::store($name, $value);
+    }
+
+    private static function store(string $name, string $value): void
+    {
+        if (isset(self::$sectionLevels[$name]) && self::$sectionLevels[$name] < self::$level) {
+            return; // defined by a child view — the child wins
+        }
+
+        self::$sections[$name]      = $value;
+        self::$sectionLevels[$name] = self::$level;
     }
 
     public static function get(string $name, string $default = ''): string
