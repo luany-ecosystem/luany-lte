@@ -22,6 +22,19 @@ namespace Luany\Lte;
  */
 class Parser
 {
+    /**
+     * Directives that never take arguments. For these, whitespace followed by
+     * '(' is plain text (e.g. `@endif (closing note)`), not an argument list.
+     * `@empty` is included because inside @forelse it is argument-less.
+     */
+    private const NO_ARG_DIRECTIVES = [
+        'else', 'endif', 'endunless', 'endforeach', 'endfor', 'endwhile',
+        'empty', 'endforelse', 'endempty', 'endphp', 'csrf', 'auth', 'endauth', 'guest',
+        'endguest', 'endsection', 'stop', 'show', 'endpush', 'endstyle',
+        'endscript', 'styles', 'scripts', 'endslot', 'endcomponent',
+        'endisset', 'endifempty', 'parent',
+    ];
+
     private string $source;
     private int    $position = 0;
     private int    $length   = 0;
@@ -169,6 +182,17 @@ class Parser
         $args = null;
         if ($this->position < $this->length && $this->source[$this->position] === '(') {
             $args = $this->parseDirectiveArgs($startLine);
+        } elseif (!in_array($name, self::NO_ARG_DIRECTIVES, true)) {
+            // Allow horizontal whitespace between the name and '(' — `@if ($x)`.
+            // Only consumed when an argument list actually follows.
+            $peek = $this->position;
+            while ($peek < $this->length && ($this->source[$peek] === ' ' || $this->source[$peek] === "\t")) {
+                $peek++;
+            }
+            if ($peek > $this->position && $peek < $this->length && $this->source[$peek] === '(') {
+                $this->position = $peek;
+                $args = $this->parseDirectiveArgs($startLine);
+            }
         }
 
         return ['type' => 'directive', 'name' => $name, 'args' => $args, 'line' => $startLine];

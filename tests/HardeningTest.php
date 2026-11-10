@@ -111,4 +111,24 @@ class HardeningTest extends TestCase
             $this->renderString($src, ['name' => 'Ana', 'items' => ['a', 'b']])
         );
     }
+
+    // ── #3 whitespace before '(' ──────────────────────────────────────────────
+
+    public function test_whitespace_before_directive_parenthesis(): void
+    {
+        $this->assertSame('yes', $this->renderString('@if ($x)yes@else no@endif', ['x' => true]));
+        $this->assertSame('123', $this->renderString("@foreach\t(\$xs as \$x){{ \$x }}@endforeach", ['xs' => [1, 2, 3]]));
+    }
+
+    public function test_whitespace_not_consumed_without_parenthesis(): void
+    {
+        $this->assertSame('a b', $this->renderString('@if(true)a@endif b'));
+        $this->assertSame('ok (note)', $this->renderString('@if(true)ok@endif (note)'));
+    }
+
+    public function test_parser_reads_args_after_whitespace(): void
+    {
+        $ast = (new Parser())->parse('@if  ($a && $b)');
+        $this->assertSame('$a && $b', $ast[0]['args']);
+    }
 }
