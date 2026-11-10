@@ -123,15 +123,26 @@ class CompilerTest extends TestCase
     {
         $out = $this->compile($this->dir('forelse', '$users as $user'));
         $this->assertStringContainsString('$__lte_fe1 = $users', $out);
-        $this->assertStringContainsString('!empty($__lte_fe1)', $out);
-        $this->assertStringContainsString('foreach ($__lte_fe1 as $user)', $out);
+        $this->assertStringContainsString('$__lte_fe1_empty = true', $out);
+        $this->assertStringContainsString('foreach (($__lte_fe1 ?: []) as $user): $__lte_fe1_empty = false;', $out);
     }
 
-    public function test_empty_closes_foreach_and_opens_else(): void
+    public function test_empty_closes_foreach_and_opens_flag_check(): void
     {
-        $out = $this->compile($this->dir('empty'));
-        $this->assertStringContainsString('endforeach', $out);
-        $this->assertStringContainsString('else:', $out);
+        $out = $this->compiler->compile([$this->dir('forelse', '$users as $user'), $this->dir('empty')]);
+        $this->assertStringContainsString('<?php endforeach; if ($__lte_fe1_empty): ?>', $out);
+    }
+
+    public function test_bare_empty_outside_forelse_throws(): void
+    {
+        $this->expectException(\Luany\Lte\TemplateSyntaxException::class);
+        $this->compile($this->dir('empty'));
+    }
+
+    public function test_empty_with_args_is_if_empty(): void
+    {
+        $this->assertSame('<?php if(empty($x)): ?>', $this->compile($this->dir('empty', '$x')));
+        $this->assertSame('<?php endif; ?>', $this->compile($this->dir('endempty')));
     }
 
     public function test_endforelse_closes_if(): void

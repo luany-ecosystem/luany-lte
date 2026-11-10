@@ -395,4 +395,35 @@ class HardeningTest extends TestCase
         $this->assertSame(0, \Luany\Lte\SectionStack::openDepth());
         $this->assertSame('fine', $this->renderString("@extends('layouts.s')@section('c')fine@endsection"));
     }
+
+    // ── #9 @forelse / @empty ──────────────────────────────────────────────────
+
+    public function test_forelse_with_empty_traversable_shows_empty_branch(): void
+    {
+        $src = '@forelse($items as $i)[{{ $i }}]@empty none@endforelse';
+        $this->assertSame(' none', $this->renderString($src, ['items' => new \ArrayIterator([])]));
+        $this->assertSame(' none', $this->renderString($src, ['items' => (function () { yield from []; })()]));
+        $this->assertSame('[1][2]', $this->renderString($src, ['items' => new \ArrayIterator([1, 2])]));
+        $this->assertSame('[a]', $this->renderString($src, ['items' => (function () { yield 'a'; })()]));
+        $this->assertSame(' none', $this->renderString($src, ['items' => null]));
+    }
+
+    public function test_nested_forelse_and_forelse_without_empty(): void
+    {
+        $src = '@forelse($rows as $r)<@forelse($r as $c){{ $c }}@empty-@endforelse>@empty none@endforelse|@forelse($rows as $r)x@endforelse';
+        $this->assertSame('<12><->|xx', $this->renderString($src, ['rows' => [[1, 2], []]]));
+    }
+
+    public function test_empty_with_argument_outside_forelse(): void
+    {
+        $this->assertSame('empty', $this->renderString('@empty($x)empty@endempty', ['x' => []]));
+        $this->assertSame('', $this->renderString('@empty($x)empty@endempty', ['x' => [1]]));
+    }
+
+    public function test_bare_empty_outside_forelse_is_a_syntax_error(): void
+    {
+        $this->expectException(\Luany\Lte\TemplateSyntaxException::class);
+        $this->expectExceptionMessage('@empty without arguments must be inside @forelse on line 2.');
+        $this->renderString("x\n@empty y");
+    }
 }

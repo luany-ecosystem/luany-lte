@@ -39,7 +39,7 @@ class Compiler
     public const BUILTIN_DIRECTIVES = [
         'if', 'elseif', 'else', 'endif', 'unless', 'endunless',
         'foreach', 'endforeach', 'for', 'endfor', 'while', 'endwhile',
-        'forelse', 'empty', 'endforelse',
+        'forelse', 'empty', 'endempty', 'endforelse',
         'php', 'endphp',
         'csrf', 'method',
         'auth', 'endauth', 'guest', 'endguest',
@@ -57,6 +57,9 @@ class Compiler
     private array $directives  = [];
     private int   $forelseDepth = 0;
 
+    /** @var list<array{flag: string, empty: bool}> */
+    private array $forelseStack = [];
+
     public function __construct()
     {
         $this->registerDefaultDirectives();
@@ -69,6 +72,7 @@ class Compiler
     public function compile(array $ast): string
     {
         $this->forelseDepth = 0;
+        $this->forelseStack = [];
 
         $php = '';
         foreach ($ast as $node) {
@@ -216,27 +220,55 @@ class Compiler
             case 'endwhile':   return '<?php endwhile; ?>';
 
             // ── @forelse / @empty / @endforelse ───────────────────────────────
+            // Compiled with a loop flag so empty Traversables / generators
+            // (for which empty() is false) still reach the @empty branch:
+            //   $__lte_fe1 = $items; $__lte_fe1_empty = true;
+            //   foreach (($__lte_fe1 ?: []) as $x): $__lte_fe1_empty = false; ...
+            //   endforeach; if ($__lte_fe1_empty): ... endif;
             case 'forelse':
-                $this->forelseDepth++;
-                $tmp = '__lte_fe' . $this->forelseDepth;
-
-                $asPos = strrpos($args, ' as ');
+                $asPos = strrpos((string) $args, ' as ');
                 if ($asPos === false) {
-                    return "<?php foreach({$args}): ?>";
+                    throw new TemplateSyntaxException(
+                        '@forelse expects "$iterable as $item"' . $this->onLine($node) . '.'
+                    );
                 }
 
-                $iterable = trim(substr($args, 0, $asPos));
-                $asVar    = trim(substr($args, $asPos + 4));
+                $this->forelseDepth++;
+                $tmp  = '__lte_fe' . $this->forelseDepth;
+                $flag = $tmp . '_empty';
+                $this->forelseStack[] = ['flag' => $flag, 'empty' => false];
 
-                return "<?php \${$tmp} = {$iterable}; if (!empty(\${$tmp})): ?>"
-                     . "<?php foreach (\${$tmp} as {$asVar}): ?>";
+                $iterable = trim(substr((string) $args, 0, $asPos));
+                $asVar    = trim(substr((string) $args, $asPos + 4));
+
+                return "<?php \${$tmp} = {$iterable}; \${$flag} = true; "
+                     . "foreach ((\${$tmp} ?: []) as {$asVar}): \${$flag} = false; ?>";
 
             case 'empty':
-                return '<?php endforeach; ?>' . '<?php else: ?>';
+                // @empty($x) — plain "if empty" block, closed by @endempty.
+                if ($args !== null && trim($args) !== '') {
+                    return "<?php if(empty({$args})): ?>";
+                }
+
+                $top = array_key_last($this->forelseStack);
+                if ($top === null || $this->forelseStack[$top]['empty']) {
+                    throw new TemplateSyntaxException(
+                        '@empty without arguments must be inside @forelse' . $this->onLine($node) . '.'
+                    );
+                }
+                $this->forelseStack[$top]['empty'] = true;
+                return "<?php endforeach; if (\${$this->forelseStack[$top]['flag']}): ?>";
+
+            case 'endempty':
+                return '<?php endif; ?>';
 
             case 'endforelse':
+                $frame = array_pop($this->forelseStack);
                 $this->forelseDepth = max(0, $this->forelseDepth - 1);
-                return '<?php endif; ?>';
+                // Without @empty the foreach itself is still open.
+                return ($frame !== null && !$frame['empty'])
+                    ? '<?php endforeach; ?>'
+                    : '<?php endif; ?>';
 
             // ── Inline PHP ────────────────────────────────────────────────────
             case 'php':
@@ -467,6 +499,12 @@ class Compiler
         }
 
         return '[' . implode(',', array_map(fn (string $p): string => var_export($p, true), $parts)) . ']';
+    }
+
+    /** @param array<string, mixed> $node */
+    private function onLine(array $node): string
+    {
+        return isset($node['line']) ? " on line {$node['line']}" : '';
     }
 
     private function hasInlineValue(string $args): bool
