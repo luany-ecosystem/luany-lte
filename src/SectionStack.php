@@ -32,14 +32,31 @@ namespace Luany\Lte;
 class SectionStack
 {
     /** @var array<string, string> */
-    private static array   $sections       = [];
-    private static ?string $currentSection = null;
-    private static ?string $layout         = null;
+    private static array   $sections = [];
+    private static ?string $layout   = null;
+
+    /**
+     * Layout nesting level being evaluated: 0 = the rendered view, 1 = its
+     * layout, 2 = the layout's parent, ... A section already defined at a
+     * lower level (closer to the child view) is never overwritten.
+     */
+    private static int $level = 0;
+
+    /** @var array<string, int> */
+    private static array $sectionLevels = [];
 
     // ── Push/Stack (v0.2) ──────────────────────────────────────────────────────
-    /** @var array<string, array<int, string>> */
-    private static array   $stacks       = [];
-    private static ?string $currentStack = null;
+    /** @var array<string, string> */
+    private static array $stacks = [];
+
+    /**
+     * Open @section / @push blocks, innermost last. Each entry remembers the
+     * output-buffer level it opened, so a block is only ever closed by the
+     * buffer it owns.
+     *
+     * @var list<array{type: string, name: string, level: int}>
+     */
+    private static array $open = [];
 
     // ── Reset ─────────────────────────────────────────────────────────────────
 
@@ -48,18 +65,27 @@ class SectionStack
      */
     public static function reset(): void
     {
-        self::$sections       = [];
-        self::$currentSection = null;
-        self::$layout         = null;
-        self::$stacks         = [];
-        self::$currentStack   = null;
+        self::$sections      = [];
+        self::$sectionLevels = [];
+        self::$level         = 0;
+        self::$layout        = null;
+        self::$stacks   = [];
+        self::$open     = [];
     }
 
     // ── Layout ────────────────────────────────────────────────────────────────
 
-    public static function setLayout(string $layout): void
+    public static function setLayout(?string $layout): void
     {
         self::$layout = $layout;
+    }
+
+    /**
+     * Called by the Engine before evaluating each (parent) layout.
+     */
+    public static function enterLayout(): void
+    {
+        self::$level++;
     }
 
     public static function getLayout(): ?string
@@ -70,113 +96,141 @@ class SectionStack
     // ── Sections ──────────────────────────────────────────────────────────────
 
     /**
-     * Start capturing a block section (@section without inline value).
+     * Begin capturing a section. Sections may be nested.
      */
     public static function start(string $name): void
     {
-        self::$currentSection = $name;
-        ob_start();
+        self::open('section', $name);
     }
 
     /**
-     * End current block section and store its content.
+     * End the innermost open section.
      *
-     * Safety: checks ob_get_level() before calling ob_end_clean() on the
-     * orphan path — prevents accidentally popping a foreign output buffer
-     * when @endsection is called without a matching @section.
+     * @throws TemplateSyntaxException On a stray @endsection/@stop, or when the
+     *         innermost open block is a @push.
      */
     public static function end(): void
     {
-        if (self::$currentSection === null) {
-            // Orphan @endsection — only clean a buffer if one is open.
-            if (ob_get_level() > 0) {
-                ob_end_clean();
-            }
-            return;
-        }
-
-        self::$sections[self::$currentSection] = ob_get_clean();
-        self::$currentSection = null;
+        $name    = self::close('section', '@endsection');
+        $content = (string) ob_get_clean();
+        self::store($name, $content);
     }
 
-    /**
-     * Set an inline section value (@section('name', 'value')).
-     */
     public static function set(string $name, string $value): void
     {
-        self::$sections[$name] = $value;
+        self::store($name, $value);
     }
 
-    /**
-     * Get a section's content for @yield.
-     */
+    private static function store(string $name, string $value): void
+    {
+        if (isset(self::$sectionLevels[$name]) && self::$sectionLevels[$name] < self::$level) {
+            return; // defined by a child view — the child wins
+        }
+
+        self::$sections[$name]      = $value;
+        self::$sectionLevels[$name] = self::$level;
+    }
+
     public static function get(string $name, string $default = ''): string
     {
         return self::$sections[$name] ?? $default;
     }
 
-    /**
-     * Check if a section has been defined.
-     */
     public static function has(string $name): bool
     {
         return isset(self::$sections[$name]);
     }
 
-    // ── Push / Stack (v0.2) ───────────────────────────────────────────────────
+    // ── Push / Stack ──────────────────────────────────────────────────────────
 
-    /*
-     * Begin capturing content to push into a named stack.
-     * Multiple @push calls to the same stack are accumulated — never replaced.
-     *
-     * Example:
-     *   @push('head')
-     *       <meta name="description" content="...">
-     *   @endpush
+    /**
+     * Begin pushing content onto a named stack.
      */
     public static function startPush(string $name): void
     {
-        self::$currentStack = $name;
-        ob_start();
+        self::open('push', $name);
     }
 
     /**
-     * End push capture and append content to the named stack.
+     * End the innermost open push and append its content to the stack.
      *
-     * Safety: checks ob_get_level() before ob_end_clean() on the
-     * orphan path — same rationale as SectionStack::end().
+     * @throws TemplateSyntaxException On a stray @endpush, or when the
+     *         innermost open block is a @section.
      */
     public static function endPush(): void
     {
-        if (self::$currentStack === null) {
-            // Orphan @endpush — only clean a buffer if one is open.
-            if (ob_get_level() > 0) {
-                ob_end_clean();
-            }
-            return;
-        }
+        $name    = self::close('push', '@endpush');
+        $content = (string) ob_get_clean();
 
-        $content = ob_get_clean();
-
-        if (!isset(self::$stacks[self::$currentStack])) {
-            self::$stacks[self::$currentStack] = '';
-        }
-
-        self::$stacks[self::$currentStack] .= $content;
-        self::$currentStack = null;
+        self::$stacks[$name] = (self::$stacks[$name] ?? '') . $content;
     }
 
-    /*
-     * Render all content pushed to a named stack.
-     *
-     * Example:
-     *
-     * ```lte
-     * @stack('head')
-     * ```
+    /**
+     * Render all content pushed onto a named stack.
      */
     public static function getStack(string $name): string
     {
         return self::$stacks[$name] ?? '';
+    }
+
+    // ── Unwinding ─────────────────────────────────────────────────────────────
+
+    /**
+     * Number of currently open @section/@push blocks.
+     */
+    public static function openDepth(): int
+    {
+        return count(self::$open);
+    }
+
+    /**
+     * Forget open blocks above $depth after a render failed. Their output
+     * buffers have already been closed by the Engine.
+     */
+    public static function unwindTo(int $depth): void
+    {
+        self::$open = array_slice(self::$open, 0, max(0, $depth));
+    }
+
+    // ── Internals ─────────────────────────────────────────────────────────────
+
+    private static function open(string $type, string $name): void
+    {
+        ob_start();
+        self::$open[] = ['type' => $type, 'name' => $name, 'level' => ob_get_level()];
+    }
+
+    /**
+     * Validate and pop the innermost open block. The caller then owns the
+     * current output buffer and must close it.
+     *
+     * @return string  The block's name
+     */
+    private static function close(string $type, string $directive): string
+    {
+        $top = end(self::$open);
+
+        if ($top === false) {
+            throw new TemplateSyntaxException(
+                "Cannot use {$directive} without a matching @{$type}."
+            );
+        }
+
+        if ($top['type'] !== $type) {
+            throw new TemplateSyntaxException(
+                "Cannot use {$directive} while @{$top['type']}('{$top['name']}') is still open."
+            );
+        }
+
+        if (ob_get_level() !== $top['level']) {
+            throw new TemplateSyntaxException(
+                "Cannot use {$directive} for @{$type}('{$top['name']}'): an output buffer opened "
+                . 'inside it was not closed (unbalanced @component/@style/@script?).'
+            );
+        }
+
+        array_pop(self::$open);
+
+        return $top['name'];
     }
 }

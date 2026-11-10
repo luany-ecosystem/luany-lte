@@ -32,12 +32,11 @@ class CompilerTest extends TestCase
 
     // ── Echo output ───────────────────────────────────────────────────────────
 
-    public function test_echo_compiles_with_htmlspecialchars(): void
+    public function test_echo_compiles_with_escaper(): void
     {
         $out = $this->compiler->compile([['type' => 'echo', 'expression' => '$name']]);
-        $this->assertStringContainsString('htmlspecialchars', $out);
+        $this->assertStringContainsString('Escaper::escape', $out);
         $this->assertStringContainsString('$name', $out);
-        $this->assertStringContainsString('ENT_QUOTES', $out);
     }
 
     public function test_raw_echo_compiles_without_escaping(): void
@@ -124,15 +123,26 @@ class CompilerTest extends TestCase
     {
         $out = $this->compile($this->dir('forelse', '$users as $user'));
         $this->assertStringContainsString('$__lte_fe1 = $users', $out);
-        $this->assertStringContainsString('!empty($__lte_fe1)', $out);
-        $this->assertStringContainsString('foreach ($__lte_fe1 as $user)', $out);
+        $this->assertStringContainsString('$__lte_fe1_empty = true', $out);
+        $this->assertStringContainsString('foreach (($__lte_fe1 ?: []) as $user): $__lte_fe1_empty = false;', $out);
     }
 
-    public function test_empty_closes_foreach_and_opens_else(): void
+    public function test_empty_closes_foreach_and_opens_flag_check(): void
     {
-        $out = $this->compile($this->dir('empty'));
-        $this->assertStringContainsString('endforeach', $out);
-        $this->assertStringContainsString('else:', $out);
+        $out = $this->compiler->compile([$this->dir('forelse', '$users as $user'), $this->dir('empty')]);
+        $this->assertStringContainsString('<?php endforeach; if ($__lte_fe1_empty): ?>', $out);
+    }
+
+    public function test_bare_empty_outside_forelse_throws(): void
+    {
+        $this->expectException(\Luany\Lte\TemplateSyntaxException::class);
+        $this->compile($this->dir('empty'));
+    }
+
+    public function test_empty_with_args_is_if_empty(): void
+    {
+        $this->assertSame('<?php if(empty($x)): ?>', $this->compile($this->dir('empty', '$x')));
+        $this->assertSame('<?php endif; ?>', $this->compile($this->dir('endempty')));
     }
 
     public function test_endforelse_closes_if(): void
@@ -189,8 +199,9 @@ class CompilerTest extends TestCase
         $out = $this->compile($this->dir('csrf'));
         $this->assertStringContainsString('<input', $out);
         $this->assertStringContainsString('type="hidden"', $out);
-        $this->assertStringContainsString('name="csrf_token"', $out);
-        $this->assertStringContainsString('htmlspecialchars', $out);
+        $this->assertStringContainsString('name="_token"', $out);
+        $this->assertStringContainsString("_csrf_token", $out);
+        $this->assertStringContainsString('Escaper::escape', $out);
     }
 
     public function test_method_generates_hidden_input_uppercased(): void
@@ -202,11 +213,10 @@ class CompilerTest extends TestCase
 
     // ── Auth guards ───────────────────────────────────────────────────────────
 
-    public function test_auth_checks_session(): void
+    public function test_auth_checks_runtime_resolver(): void
     {
         $out = $this->compile($this->dir('auth'));
-        $this->assertStringContainsString('isset', $out);
-        $this->assertStringContainsString("'user_id'", $out);
+        $this->assertStringContainsString('Runtime::check()', $out);
     }
 
     public function test_endauth_closes_if(): void
@@ -217,7 +227,7 @@ class CompilerTest extends TestCase
     public function test_guest_is_negation_of_auth(): void
     {
         $guest = $this->compile($this->dir('guest'));
-        $this->assertStringContainsString('!isset', $guest);
+        $this->assertStringContainsString('!\\Luany\\Lte\\Runtime::check()', $guest);
     }
 
     public function test_endguest_closes_if(): void

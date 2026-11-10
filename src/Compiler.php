@@ -35,9 +35,30 @@ namespace Luany\Lte;
  */
 class Compiler
 {
+    /** Directive names handled natively by compileDirective(). */
+    public const BUILTIN_DIRECTIVES = [
+        'if', 'elseif', 'else', 'endif', 'unless', 'endunless',
+        'foreach', 'endforeach', 'for', 'endfor', 'while', 'endwhile',
+        'forelse', 'empty', 'endempty', 'endforelse',
+        'php', 'endphp',
+        'csrf', 'method',
+        'auth', 'endauth', 'guest', 'endguest',
+        'extends', 'section', 'endsection', 'stop', 'yield',
+        'include',
+        'style', 'endstyle', 'script', 'endscript', 'styles', 'scripts',
+        'push', 'endpush', 'stack',
+        'json', 'class',
+        'component', 'slot', 'endslot', 'endcomponent',
+        'dump', 'dd',
+        'isset', 'endisset', 'ifempty', 'endifempty',
+    ];
+
     /** @var array<string, callable> */
     private array $directives  = [];
     private int   $forelseDepth = 0;
+
+    /** @var list<array{flag: string, empty: bool}> */
+    private array $forelseStack = [];
 
     public function __construct()
     {
@@ -51,40 +72,122 @@ class Compiler
     public function compile(array $ast): string
     {
         $this->forelseDepth = 0;
+        $this->forelseStack = [];
 
         $php = '';
         foreach ($ast as $node) {
-            $php .= $this->compileNode($node);
+            foreach ($this->compileNode($node) as $piece) {
+                $php = $this->append($php, $piece);
+            }
         }
         return $php;
     }
 
-    /** @param array<string, mixed> $node */
-    private function compileNode(array $node): string
+    /**
+     * Compile-time balance check for @section/@endsection(@stop) and
+     * @push/@endpush, so a stray or mismatched closer is reported with its
+     * source line instead of corrupting output buffers at runtime.
+     *
+     * Called by the Engine for complete templates; compile() itself does not
+     * validate, so template fragments can still be compiled on their own.
+     *
+     * @param array<int, array<string, mixed>> $ast
+     * @throws TemplateSyntaxException
+     */
+    public function validate(array $ast): void
+    {
+        $closers = ['endsection' => 'section', 'stop' => 'section', 'endpush' => 'push'];
+        $open    = [];
+
+        foreach ($ast as $node) {
+            if (($node['type'] ?? null) !== 'directive' || isset($this->directives[$node['name']])) {
+                continue;
+            }
+
+            $name = $node['name'];
+            $line = isset($node['line']) ? " on line {$node['line']}" : '';
+
+            if ($name === 'section' || $name === 'push') {
+                $args = $node['args'];
+                if ($args === null || trim($args) === '' || ($name === 'section' && $this->hasInlineValue($args))) {
+                    continue; // inline section or no-op: not a block
+                }
+                $open[] = ['type' => $name, 'line' => $line];
+                continue;
+            }
+
+            if (isset($closers[$name])) {
+                $expected = $closers[$name];
+                $top      = end($open);
+
+                if ($top === false) {
+                    throw new TemplateSyntaxException("Unexpected @{$name}{$line}: no open @{$expected}.");
+                }
+                if ($top['type'] !== $expected) {
+                    throw new TemplateSyntaxException(
+                        "Unexpected @{$name}{$line}: @{$top['type']} opened{$top['line']} is still open."
+                    );
+                }
+                array_pop($open);
+            }
+        }
+
+        $top = end($open);
+        if ($top !== false) {
+            $closer = $top['type'] === 'section' ? '@endsection' : '@endpush';
+            throw new TemplateSyntaxException("Unclosed @{$top['type']} opened{$top['line']}: missing {$closer}.");
+        }
+    }
+
+    /**
+     * Concatenate a compiled piece, preserving template whitespace.
+     *
+     * PHP swallows a single newline ("\n" or "\r\n") that immediately follows
+     * a closing `?>` tag. Whenever a piece starting with a newline is appended
+     * right after a `?>`, an extra "\n" is inserted for PHP to consume so the
+     * rendered output keeps the template's newlines exactly.
+     */
+    private function append(string $php, string $piece): string
+    {
+        if ($piece === '') {
+            return $php;
+        }
+
+        if (($piece[0] === "\n" || str_starts_with($piece, "\r\n")) && str_ends_with($php, '?>')) {
+            $php .= "\n";
+        }
+
+        return $php . $piece;
+    }
+
+    /**
+     * @param array<string, mixed> $node
+     * @return list<string>  Compiled pieces (line marker first, if any)
+     */
+    private function compileNode(array $node): array
     {
         $line   = $node['line'] ?? null;
         $marker = ($line !== null) ? "<?php /* @lte:{$line} */ ?>" : '';
 
         switch ($node['type']) {
             case 'text':
-                // Text nodes: emit the line marker only if there is actual content
-                return $marker . $node['content'];
+                return [$marker, $node['content']];
 
             case 'echo':
-                return $marker
-                    . "<?php echo htmlspecialchars((string)({$node['expression']} ?? ''), ENT_QUOTES, 'UTF-8'); ?>";
+                return [$marker,
+                    "<?php echo \\Luany\\Lte\\Escaper::escape({$node['expression']} ?? ''); ?>"];
 
             case 'raw_echo':
-                return $marker . "<?php echo {$node['expression']}; ?>";
+                return [$marker, "<?php echo {$node['expression']}; ?>"];
 
             case 'php_block':
-                return $marker . "<?php\n{$node['content']}\n?>";
+                return [$marker, "<?php\n{$node['content']}\n?>"];
 
             case 'directive':
-                return $marker . $this->compileDirective($node);
+                return [$marker, $this->compileDirective($node)];
 
             default:
-                return '';
+                return [];
         }
     }
 
@@ -117,27 +220,55 @@ class Compiler
             case 'endwhile':   return '<?php endwhile; ?>';
 
             // ── @forelse / @empty / @endforelse ───────────────────────────────
+            // Compiled with a loop flag so empty Traversables / generators
+            // (for which empty() is false) still reach the @empty branch:
+            //   $__lte_fe1 = $items; $__lte_fe1_empty = true;
+            //   foreach (($__lte_fe1 ?: []) as $x): $__lte_fe1_empty = false; ...
+            //   endforeach; if ($__lte_fe1_empty): ... endif;
             case 'forelse':
-                $this->forelseDepth++;
-                $tmp = '__lte_fe' . $this->forelseDepth;
-
-                $asPos = strrpos($args, ' as ');
+                $asPos = strrpos((string) $args, ' as ');
                 if ($asPos === false) {
-                    return "<?php foreach({$args}): ?>";
+                    throw new TemplateSyntaxException(
+                        '@forelse expects "$iterable as $item"' . $this->onLine($node) . '.'
+                    );
                 }
 
-                $iterable = trim(substr($args, 0, $asPos));
-                $asVar    = trim(substr($args, $asPos + 4));
+                $this->forelseDepth++;
+                $tmp  = '__lte_fe' . $this->forelseDepth;
+                $flag = $tmp . '_empty';
+                $this->forelseStack[] = ['flag' => $flag, 'empty' => false];
 
-                return "<?php \${$tmp} = {$iterable}; if (!empty(\${$tmp})): ?>"
-                     . "<?php foreach (\${$tmp} as {$asVar}): ?>";
+                $iterable = trim(substr((string) $args, 0, $asPos));
+                $asVar    = trim(substr((string) $args, $asPos + 4));
+
+                return "<?php \${$tmp} = {$iterable}; \${$flag} = true; "
+                     . "foreach ((\${$tmp} ?: []) as {$asVar}): \${$flag} = false; ?>";
 
             case 'empty':
-                return '<?php endforeach; ?>' . '<?php else: ?>';
+                // @empty($x) — plain "if empty" block, closed by @endempty.
+                if ($args !== null && trim($args) !== '') {
+                    return "<?php if(empty({$args})): ?>";
+                }
+
+                $top = array_key_last($this->forelseStack);
+                if ($top === null || $this->forelseStack[$top]['empty']) {
+                    throw new TemplateSyntaxException(
+                        '@empty without arguments must be inside @forelse' . $this->onLine($node) . '.'
+                    );
+                }
+                $this->forelseStack[$top]['empty'] = true;
+                return "<?php endforeach; if (\${$this->forelseStack[$top]['flag']}): ?>";
+
+            case 'endempty':
+                return '<?php endif; ?>';
 
             case 'endforelse':
+                $frame = array_pop($this->forelseStack);
                 $this->forelseDepth = max(0, $this->forelseDepth - 1);
-                return '<?php endif; ?>';
+                // Without @empty the foreach itself is still open.
+                return ($frame !== null && !$frame['empty'])
+                    ? '<?php endforeach; ?>'
+                    : '<?php endif; ?>';
 
             // ── Inline PHP ────────────────────────────────────────────────────
             case 'php':
@@ -147,35 +278,41 @@ class Compiler
 
             // ── Security ──────────────────────────────────────────────────────
             case 'csrf':
-                return '<input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars('
-                    . '(string)(isset($_SESSION[\'csrf_token\']) '
-                    . '? $_SESSION[\'csrf_token\'] '
-                    . ': ($_SESSION[\'csrf_token\'] = bin2hex(random_bytes(32)))), '
-                    . 'ENT_QUOTES, \'UTF-8\'); ?>">';
+                // Ecosystem convention: field "_token", session key "_csrf_token".
+                // Uses the framework's csrf_token() helper when available.
+                return '<input type="hidden" name="_token" value="<?php echo \\Luany\\Lte\\Escaper::escape('
+                    . '\\function_exists(\'csrf_token\') ? (string) \\csrf_token() '
+                    . ': (string) ($_SESSION[\'_csrf_token\'] ??= \\bin2hex(\\random_bytes(32))))'
+                    . '; ?>">';
 
             case 'method':
-                $m = strtoupper(trim($args, '\'"'));
-                return '<input type="hidden" name="_method" value="' . $m . '">';
+                $methodArg = trim((string) $args);
+                if (ExpressionScanner::isStringLiteral($methodArg) || preg_match('/^[A-Za-z]+$/', $methodArg) === 1) {
+                    $m = htmlspecialchars(strtoupper(trim($methodArg, '\'"')), Escaper::FLAGS, 'UTF-8');
+                    return '<input type="hidden" name="_method" value="' . $m . '">';
+                }
+                return '<input type="hidden" name="_method" value="<?php echo \\Luany\\Lte\\Escaper::escape(strtoupper((string)('
+                    . $methodArg . '))); ?>">';
 
             // ── Auth guards ───────────────────────────────────────────────────
-            case 'auth':    return "<?php if(isset(\$_SESSION['user_id'])): ?>";
+            case 'auth':    return '<?php if(\\Luany\\Lte\\Runtime::check()): ?>';
             case 'endauth': return '<?php endif; ?>';
-            case 'guest':   return "<?php if(!isset(\$_SESSION['user_id'])): ?>";
+            case 'guest':   return '<?php if(!\\Luany\\Lte\\Runtime::check()): ?>';
             case 'endguest':return '<?php endif; ?>';
 
             // ── Layout system ─────────────────────────────────────────────────
             case 'extends':
-                $layout = trim($args, '\'"');
-                return "<?php \\Luany\\Lte\\SectionStack::setLayout('{$layout}'); ?>";
+                $layout = $this->nameExpr($args);
+                return "<?php \\Luany\\Lte\\SectionStack::setLayout({$layout}); ?>";
 
             case 'section':
                 if ($args === null) return '';
                 if ($this->hasInlineValue($args)) {
                     [$sectionName, $value] = $this->parseSectionArgs($args);
-                    return "<?php \\Luany\\Lte\\SectionStack::set('{$sectionName}', {$value}); ?>";
+                    return "<?php \\Luany\\Lte\\SectionStack::set({$sectionName}, \\Luany\\Lte\\Escaper::escape({$value})); ?>";
                 }
-                $sectionName = trim($args, '\'"');
-                return "<?php \\Luany\\Lte\\SectionStack::start('{$sectionName}'); ?>";
+                $sectionName = $this->nameExpr($args);
+                return "<?php \\Luany\\Lte\\SectionStack::start({$sectionName}); ?>";
 
             case 'endsection':
             case 'stop':
@@ -185,7 +322,7 @@ class Compiler
                 $yieldArgs   = $this->parseYieldArgs($args);
                 $sectionName = $yieldArgs[0];
                 $default     = $yieldArgs[1] ?? "''";
-                return "<?php echo \\Luany\\Lte\\SectionStack::get('{$sectionName}', {$default}); ?>";
+                return "<?php echo \\Luany\\Lte\\SectionStack::get({$sectionName}, \\Luany\\Lte\\Escaper::escape({$default})); ?>";
 
             // ── Include ───────────────────────────────────────────────────────
             case 'include':
@@ -194,15 +331,14 @@ class Compiler
                             . "ARRAY_FILTER_USE_KEY)";
 
                 if ($args !== null && $this->hasInlineValue($args)) {
-                    [$rawView, $extraData] = $this->parseSectionArgs($args);
-                    $viewName = trim($rawView, '\'"');
+                    [$viewName, $extraData] = $this->parseSectionArgs($args);
                     $data     = "array_merge({$parentVars}, {$extraData})";
                 } else {
-                    $viewName = trim((string) $args, '\'"');
+                    $viewName = $this->nameExpr($args);
                     $data     = $parentVars;
                 }
 
-                return "<?php echo \$__engine->render('{$viewName}', {$data}); ?>";
+                return "<?php echo \$__engine->render({$viewName}, {$data}); ?>";
 
             // ── Asset directives ──────────────────────────────────────────────
             //
@@ -244,13 +380,13 @@ class Compiler
 
             // ── Stack directives ──────────────────────────────────────────────
             case 'push':
-                $stackName = trim($args, '\'"');
-                return "<?php \Luany\Lte\SectionStack::startPush('{$stackName}'); ?>";
+                $stackName = $this->nameExpr($args);
+                return "<?php \Luany\Lte\SectionStack::startPush({$stackName}); ?>";
             case 'endpush':
                 return '<?php \Luany\Lte\SectionStack::endPush(); ?>';
             case 'stack':
-                $stackName = trim($args, '\'"');
-                return "<?php echo \Luany\Lte\SectionStack::getStack('{$stackName}'); ?>";
+                $stackName = $this->nameExpr($args);
+                return "<?php echo \Luany\Lte\SectionStack::getStack({$stackName}); ?>";
 
             // ── @json (Phase 5) ───────────────────────────────────────────────
             //
@@ -272,9 +408,9 @@ class Compiler
                 $safeFlags = 'JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE';
                 if ($args !== null && $this->hasInlineValue($args)) {
                     // @json($data, CUSTOM_FLAGS) — two arguments
-                    [$exprPart, $flagsPart] = $this->parseSectionArgs($args);
-                    $expr  = trim($exprPart);
-                    $flags = trim($flagsPart) . ' | ' . $safeFlags;
+                    $jsonArgs = ExpressionScanner::split($args);
+                    $expr     = $jsonArgs[0];
+                    $flags    = '(' . $jsonArgs[1] . ') | ' . $safeFlags;
                     return "<?php echo json_encode({$expr}, {$flags}); ?>";
                 }
                 // @json($data) — single argument
@@ -314,11 +450,11 @@ class Compiler
             //
             case 'component':
                 [$viewName, $dataExpr] = $this->parseComponentArgs($args);
-                return "<?php \\Luany\\Lte\\ComponentStack::startComponent(\$__engine, '{$viewName}', {$dataExpr}); ?>";
+                return "<?php \\Luany\\Lte\\ComponentStack::startComponent(\$__engine, {$viewName}, {$dataExpr}); ?>";
 
             case 'slot':
-                $slotName = $args !== null ? trim($args, '\'"') : '__default';
-                return "<?php \\Luany\\Lte\\ComponentStack::startSlot('{$slotName}'); ?>";
+                $slotName = $args !== null && trim($args) !== '' ? $this->nameExpr($args) : "'__default'";
+                return "<?php \\Luany\\Lte\\ComponentStack::startSlot({$slotName}); ?>";
 
             case 'endslot':
                 return '<?php \\Luany\\Lte\\ComponentStack::endSlot(); ?>';
@@ -328,9 +464,9 @@ class Compiler
 
             // ── Debug helpers ─────────────────────────────────────────────────
             case 'dump':
-                return "<?php var_dump({$args}); ?>";
+                return "<?php if (\\Luany\\Lte\\Runtime::debug()) { var_dump({$args}); } ?>";
             case 'dd':
-                return "<?php var_dump({$args}); die; ?>";
+                return "<?php if (\\Luany\\Lte\\Runtime::debug()) { var_dump({$args}); die; } ?>";
 
             // ── @isset / @endisset ────────────────────────────────────────────
             case 'isset':
@@ -353,81 +489,83 @@ class Compiler
 
     private function parseArgs(?string $args): string
     {
-        if ($args === null || trim($args) === '') {
+        $parts = ExpressionScanner::split($args);
+        $parts = array_values(array_filter(
+            array_map(fn (string $p): string => trim($p, '\'" '), $parts),
+            fn (string $p): bool => $p !== ''
+        ));
+
+        if ($parts === []) {
             return '[]';
         }
 
-        $args  = trim($args, '() ');
-        $parts = [];
-        $token = '';
-        $inS   = false;
-        $inD   = false;
+        return '[' . implode(',', array_map(fn (string $p): string => var_export($p, true), $parts)) . ']';
+    }
 
-        for ($i = 0, $len = strlen($args); $i < $len; $i++) {
-            $ch = $args[$i];
-
-            if ($ch === "'" && !$inD) { $inS = !$inS; $token .= $ch; continue; }
-            if ($ch === '"' && !$inS) { $inD = !$inD; $token .= $ch; continue; }
-
-            if ($ch === ',' && !$inS && !$inD) {
-                $parts[] = trim($token, '\'" ');
-                $token   = '';
-                continue;
-            }
-
-            $token .= $ch;
-        }
-
-        if (trim($token) !== '') {
-            $parts[] = trim($token, '\'" ');
-        }
-
-        if (empty($parts)) {
-            return '[]';
-        }
-
-        return '[' . implode(',', array_map(fn($p) => "'{$p}'", $parts)) . ']';
+    /** @param array<string, mixed> $node */
+    private function onLine(array $node): string
+    {
+        return isset($node['line']) ? " on line {$node['line']}" : '';
     }
 
     private function hasInlineValue(string $args): bool
     {
-        $inSingle = $inDouble = false;
-        for ($i = 0, $len = strlen($args); $i < $len; $i++) {
-            $ch = $args[$i];
-            if ($ch === "'" && !$inDouble) { $inSingle = !$inSingle; continue; }
-            if ($ch === '"' && !$inSingle) { $inDouble = !$inDouble; continue; }
-            if ($ch === ',' && !$inSingle && !$inDouble) return true;
-        }
-        return false;
+        return count(ExpressionScanner::split($args)) > 1;
     }
 
-    /** @return array{0: string, 1: string|null} */
+    /**
+     * Turn a view/section/stack name argument into a PHP expression.
+     *
+     *   'layouts.main' / "layouts.main" / layouts.main  → 'layouts.main'
+     *   $layout, $prefix . '.card', "x.$y"             → passed through unchanged
+     */
+    private function nameExpr(?string $arg): string
+    {
+        $arg = trim((string) $arg);
+
+        if ($arg === '') {
+            return "''";
+        }
+
+        $bare = '/^[A-Za-z0-9_.\-\/:]+$/';
+
+        if (ExpressionScanner::isStringLiteral($arg)) {
+            $inner = substr($arg, 1, -1);
+            return preg_match($bare, $inner) === 1 ? var_export($inner, true) : $arg;
+        }
+
+        // Legacy unquoted names: @extends(layouts.main)
+        if (preg_match($bare, $arg) === 1 && !is_numeric($arg)) {
+            return var_export($arg, true);
+        }
+
+        return $arg;
+    }
+
+    /**
+     * Split "name, value" at the first top-level comma (strings and nested
+     * brackets aware). The name becomes a PHP expression (see nameExpr());
+     * the value is returned verbatim.
+     *
+     * @return array{0: string, 1: string}
+     */
     private function parseSectionArgs(string $args): array
     {
-        $inSingle = $inDouble = false;
-        $splitAt  = -1;
-        for ($i = 0, $len = strlen($args); $i < $len; $i++) {
-            $ch = $args[$i];
-            if ($ch === "'" && !$inDouble) { $inSingle = !$inSingle; continue; }
-            if ($ch === '"' && !$inSingle) { $inDouble = !$inDouble; continue; }
-            if ($ch === ',' && !$inSingle && !$inDouble) { $splitAt = $i; break; }
+        $parts = ExpressionScanner::split($args);
+        if (count($parts) < 2) {
+            return [$this->nameExpr($args), "''"];
         }
-        if ($splitAt === -1) {
-            return [trim($args, '\'" '), "''"];
-        }
-        $name  = trim(substr($args, 0, $splitAt), '\'" ');
-        $value = trim(substr($args, $splitAt + 1));
+
+        $name  = $this->nameExpr(array_shift($parts));
+        $value = implode(', ', $parts);
         return [$name, $value];
     }
 
-    /** @return array{0: string, 1: string|null} */
+    /** @return array{0: string, 1: string} */
     private function parseYieldArgs(?string $args): array
     {
-        if ($args === null) return ['', "''"];
-        if ($this->hasInlineValue($args)) {
-            return $this->parseSectionArgs($args);
-        }
-        return [trim($args, '\'"'), "''"];
+        if ($args === null) return ["''", "''"];
+        return $this->parseSectionArgs($args);
     }
 
     /**
@@ -438,35 +576,14 @@ class Compiler
     private function parseComponentArgs(?string $args): array
     {
         if ($args === null || trim($args) === '') {
-            return ['', '[]'];
+            return ["''", '[]'];
         }
 
         if ($this->hasInlineValue($args)) {
-            // Two arguments: 'view.name', [...]
-            $depth   = 0;
-            $splitAt = -1;
-            $inS = $inD = false;
-
-            for ($i = 0, $len = strlen($args); $i < $len; $i++) {
-                $ch = $args[$i];
-                if ($ch === "'" && !$inD) { $inS = !$inS; continue; }
-                if ($ch === '"' && !$inS) { $inD = !$inD; continue; }
-                if (!$inS && !$inD) {
-                    if ($ch === '[' || $ch === '(') $depth++;
-                    elseif ($ch === ']' || $ch === ')') $depth--;
-                    elseif ($ch === ',' && $depth === 0) { $splitAt = $i; break; }
-                }
-            }
-
-            if ($splitAt !== -1) {
-                $viewPart = trim(substr($args, 0, $splitAt), '\'" ');
-                $dataPart = trim(substr($args, $splitAt + 1));
-                return [$viewPart, $dataPart];
-            }
+            return $this->parseSectionArgs($args);
         }
 
-        // Single argument: just 'view.name'
-        return [trim($args, '\'" '), '[]'];
+        return [$this->nameExpr($args), '[]'];
     }
 
     // ── Custom directives ──────────────────────────────────────────────────────
@@ -474,6 +591,26 @@ class Compiler
     public function directive(string $name, callable $handler): void
     {
         $this->directives[$name] = $handler;
+    }
+
+    /**
+     * Stable fingerprint of the registered custom directive set, used in the
+     * Engine's compiled-cache key.
+     */
+    public function signature(): string
+    {
+        $names = array_keys($this->directives);
+        sort($names);
+        return implode(',', $names);
+    }
+
+    /**
+     * Whether `@{$name}` is a directive (built-in or registered custom).
+     * Any other `@word` in a template is left as literal text.
+     */
+    public function isDirective(string $name): bool
+    {
+        return isset($this->directives[$name]) || in_array($name, self::BUILTIN_DIRECTIVES, true);
     }
 
     private function registerDefaultDirectives(): void

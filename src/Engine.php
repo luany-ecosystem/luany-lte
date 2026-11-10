@@ -36,6 +36,12 @@ namespace Luany\Lte;
  */
 class Engine
 {
+    /**
+     * Engine version. Part of the compiled-cache key, so upgrading LTE never
+     * reuses templates compiled by an older compiler.
+     */
+    public const VERSION = '1.1.0-dev';
+
     private Parser   $parser;
     private Compiler $compiler;
     private string   $viewsPath;
@@ -49,16 +55,22 @@ class Engine
         bool    $autoReload = false
     ) {
         $this->viewsPath  = rtrim($viewsPath, '/');
-        $this->cachePath  = $cachePath !== null
-            ? rtrim($cachePath, '/')
-            : sys_get_temp_dir() . '/lte_cache';
         $this->autoReload = $autoReload;
 
-        $this->parser   = new Parser();
         $this->compiler = new Compiler();
+        $compiler       = $this->compiler;
+        $this->parser   = new Parser(static fn (string $name): bool => $compiler->isDirective($name));
 
-        if (!is_dir($this->cachePath)) {
-            mkdir($this->cachePath, 0755, true);
+        if ($cachePath !== null) {
+            $this->cachePath = rtrim($cachePath, '/\\');
+            self::ensureDirectory($this->cachePath, 0755);
+        } else {
+            // No shared, predictable /tmp/lte_cache: use a per-user directory
+            // created 0700 and refuse it if another user owns or can write it.
+            // Passing an explicit, project-local $cachePath is recommended.
+            $this->cachePath = self::defaultCachePath();
+            self::ensureDirectory($this->cachePath, 0700);
+            self::assertPrivateDirectory($this->cachePath);
         }
     }
 
@@ -84,6 +96,13 @@ class Engine
             }
         }
 
+        // Snapshot of the global render state, restored if this render fails so
+        // that a throwing view/component cannot leak frames or buffers into the
+        // next render (long-running workers: RoadRunner, Swoole, FrankenPHP).
+        $obLevel        = ob_get_level();
+        $componentDepth = ComponentStack::depth();
+        $sectionDepth   = SectionStack::openDepth();
+
         self::$renderDepth++;
 
         try {
@@ -97,12 +116,27 @@ class Engine
                 $this->compile($viewPath, $cachedPath, $view);
             }
 
-            $output = $this->evaluate($cachedPath, $data, $viewPath);
+            // @extends is only honoured for the top-level view: a partial or
+            // component that declares a layout must not hijack the page's.
+            $outerLayout = SectionStack::getLayout();
+            $output      = $this->evaluate($cachedPath, $data, $viewPath);
+            if (!$isRoot) {
+                SectionStack::setLayout($outerLayout);
+            }
 
             if ($isRoot) {
-                $layout = SectionStack::getLayout();
+                // Resolve the layout chain: child → layout → parent layout ...
+                // Each level may @extends another; sections defined at a lower
+                // level (closer to the child) take precedence.
+                $seen = [];
+                while (($layout = SectionStack::getLayout()) !== null) {
+                    if (isset($seen[$layout])) {
+                        throw new TemplateSyntaxException(
+                            'Circular @extends detected: ' . implode(' → ', array_keys($seen)) . " → {$layout}"
+                        );
+                    }
+                    $seen[$layout] = true;
 
-                if ($layout !== null) {
                     $layoutPath = $this->findView($layout);
                     if (!$layoutPath) {
                         throw new \Exception("Layout [{$layout}] not found in [{$this->viewsPath}]");
@@ -112,17 +146,17 @@ class Engine
                         $this->compile($layoutPath, $layoutCached, $layout);
                     }
 
-                    // Evaluate the full layout — this runs all @include directives,
+                    SectionStack::setLayout(null);
+                    SectionStack::enterLayout();
+
+                    // Evaluate the layout — this runs all @include directives,
                     // registering every component's @style/@script blocks into AssetStack.
-                    // Only AFTER this returns do we replace the placeholders emitted by
-                    // @styles and @scripts, ensuring a complete asset collection.
-                    return $this->resolveAssetPlaceholders(
-                        $this->evaluate($layoutCached, $data, $layoutPath)
-                    );
+                    $output = $this->evaluate($layoutCached, $data, $layoutPath);
                 }
 
-                // Root view without a layout — still resolve any @styles/@scripts
-                // the author may have placed directly in the view (edge case but valid).
+                // Only AFTER the outermost layout returns do we replace the
+                // placeholders emitted by @styles and @scripts, ensuring a
+                // complete asset collection.
                 return $this->resolveAssetPlaceholders($output);
             }
 
@@ -130,6 +164,16 @@ class Engine
             // is responsible for resolving placeholders after the full cycle.
             return $output;
 
+        } catch (\Throwable $e) {
+            while (ob_get_level() > $obLevel) {
+                ob_end_clean();
+            }
+            ComponentStack::unwindTo($componentDepth);
+            SectionStack::unwindTo($sectionDepth);
+            if ($isRoot) {
+                AssetStack::reset();
+            }
+            throw $e;
         } finally {
             self::$renderDepth--;
         }
@@ -148,7 +192,10 @@ class Engine
      */
     public function clearCache(): void
     {
-        $files = glob($this->cachePath . '/*.php');
+        $files = array_merge(
+            glob($this->cachePath . '/*.php') ?: [],
+            glob($this->cachePath . '/*.tmp') ?: []
+        );
         if ($files) {
             foreach ($files as $file) {
                 if (is_file($file)) unlink($file);
@@ -180,9 +227,22 @@ class Engine
         return null;
     }
 
+    /**
+     * Absolute path of the compiled-template cache directory.
+     */
+    public function getCachePath(): string
+    {
+        return $this->cachePath;
+    }
+
+    /**
+     * Cache file for a view. The key covers the source path, the engine
+     * version and the set of registered custom directives, so neither an
+     * upgrade nor registering a directive reuses stale compiled code.
+     */
     private function getCachedPath(string $viewPath): string
     {
-        $hash = md5($viewPath);
+        $hash = hash('sha256', self::VERSION . "\0" . $this->compiler->signature() . "\0" . $viewPath);
         return $this->cachePath . '/' . $hash . '.php';
     }
 
@@ -190,7 +250,101 @@ class Engine
     {
         if ($this->autoReload) return true;
         if (!file_exists($cachedPath)) return true;
-        return filemtime($viewPath) > filemtime($cachedPath);
+        // '>=' so that an edit in the same second as the last compile is not
+        // missed (see writeCompiled() for how this avoids endless recompiles).
+        return filemtime($viewPath) >= filemtime($cachedPath);
+    }
+
+    /**
+     * Atomically write compiled PHP: write a unique temp file in the cache
+     * directory, then rename() it over the target. Concurrent requests see
+     * either the old or the new file, never a partially written one.
+     *
+     * mtime: when the source was modified in the current second, the cache
+     * file is back-dated to before the source so the next request recompiles
+     * (an edit later in this same second must not be missed). Otherwise the
+     * cache keeps "now", which is strictly newer than the source.
+     */
+    private function writeCompiled(string $viewPath, string $cachedPath, string $php): void
+    {
+        $tmp = $cachedPath . '.' . bin2hex(random_bytes(8)) . '.tmp';
+
+        if (@file_put_contents($tmp, $php) !== strlen($php)) {
+            @unlink($tmp);
+            throw new \RuntimeException("LTE could not write compiled template to [{$tmp}].");
+        }
+
+        clearstatcache(true, $viewPath);
+        $sourceMtime = filemtime($viewPath);
+        if ($sourceMtime !== false && $sourceMtime >= time()) {
+            @touch($tmp, $sourceMtime - 1);
+        }
+
+        if (!@rename($tmp, $cachedPath)) {
+            @unlink($tmp);
+            throw new \RuntimeException("LTE could not move compiled template into [{$cachedPath}].");
+        }
+
+        clearstatcache(true, $cachedPath);
+        if (function_exists('opcache_invalidate')) {
+            @opcache_invalidate($cachedPath, true);
+        }
+    }
+
+    private static function defaultCachePath(): string
+    {
+        $user = function_exists('posix_geteuid')
+            ? (string) posix_geteuid()
+            : substr(hash('sha256', get_current_user() . "\0" . __DIR__), 0, 16);
+
+        return rtrim(sys_get_temp_dir(), '/\\') . '/lte_cache_' . $user;
+    }
+
+    private static function ensureDirectory(string $dir, int $mode): void
+    {
+        if (is_dir($dir)) {
+            return;
+        }
+
+        if (!@mkdir($dir, $mode, true) && !is_dir($dir)) {
+            throw new \RuntimeException("LTE could not create cache directory [{$dir}].");
+        }
+
+        // mkdir() is subject to the umask; enforce the intended mode.
+        @chmod($dir, $mode);
+    }
+
+    /**
+     * Refuse a cache directory that another user could have planted or can
+     * write to: it must be a real directory (not a symlink) owned by the
+     * current user; group/other write permission is removed (or refused).
+     */
+    private static function assertPrivateDirectory(string $dir): void
+    {
+        clearstatcache(true, $dir);
+
+        if (is_link($dir) || !is_dir($dir)) {
+            throw new \RuntimeException("LTE refuses cache directory [{$dir}]: not a real directory.");
+        }
+
+        if (!function_exists('posix_geteuid')) {
+            return; // ownership cannot be verified (e.g. Windows)
+        }
+
+        if (fileowner($dir) !== posix_geteuid()) {
+            throw new \RuntimeException(
+                "LTE refuses cache directory [{$dir}]: it is owned by another user. "
+                . 'Pass an explicit $cachePath to Engine.'
+            );
+        }
+
+        $perms = fileperms($dir);
+        if ($perms !== false && ($perms & 0022) !== 0 && !@chmod($dir, 0700)) {
+            throw new \RuntimeException(
+                "LTE refuses cache directory [{$dir}]: it is writable by group or others. "
+                . 'Pass an explicit $cachePath to Engine.'
+            );
+        }
     }
 
     /**
@@ -208,16 +362,18 @@ class Engine
 
         try {
             $ast = $this->parser->parse($source);
+            $this->compiler->validate($ast);
             $php = $this->compiler->compile($ast);
         } catch (\Throwable $e) {
-            throw new \RuntimeException(
+            $class = $e instanceof TemplateSyntaxException ? TemplateSyntaxException::class : \RuntimeException::class;
+            throw new $class(
                 "LTE compilation error in view [{$viewName}]: " . $e->getMessage(),
                 0,
                 $e
             );
         }
 
-        file_put_contents($cachedPath, $php);
+        $this->writeCompiled($viewPath, $cachedPath, $php);
     }
 
     /**
@@ -287,7 +443,22 @@ class Engine
                 $e
             );
         }
-        return ob_get_clean();
+
+        // A view must leave exactly the one buffer we opened. Anything else means
+        // an unbalanced block (@section/@push/@component/@style) and returning
+        // ob_get_clean() would hand back somebody else's buffer.
+        if (ob_get_level() !== $__lte_ob_level + 1) {
+            while (ob_get_level() > $__lte_ob_level) {
+                ob_end_clean();
+            }
+            $viewLabel = basename($__lte_source !== '' ? $__lte_source : $__lte_path);
+            throw new TemplateSyntaxException(
+                "LTE render error in [{$viewLabel}]: unbalanced output buffers — "
+                . 'a @section, @push, @component, @style or @script block was not closed.'
+            );
+        }
+
+        return (string) ob_get_clean();
     }
 
     /**

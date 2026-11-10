@@ -74,12 +74,13 @@ final class ClassHelper
      * Build a complete class="..." HTML attribute string.
      *
      * Convenience wrapper over compile() used by the @class directive.
+     * The class list is HTML-escaped so it cannot break out of the attribute.
      * Keeps the generated PHP template free of any string-literal quoting.
      *
      * @param array<int|string, mixed> $classes
      */
     public static function attr(array $classes): string
     {
-        return 'class="' . self::compile($classes) . '"';
+        return 'class="' . htmlspecialchars(self::compile($classes), Escaper::FLAGS, 'UTF-8') . '"';
     }
 }
