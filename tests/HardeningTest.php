@@ -213,4 +213,35 @@ class HardeningTest extends TestCase
         $this->assertFalse(\Luany\Lte\ExpressionScanner::isStringLiteral("'a' . 'b'"));
         $this->assertFalse(\Luany\Lte\ExpressionScanner::isStringLiteral('$view'));
     }
+
+    // ── #6 dynamic view / section names ───────────────────────────────────────
+
+    public function test_dynamic_include_extends_and_section_names(): void
+    {
+        $this->write('partials/card.lte', '[card {{ $n }}]');
+        $this->write('layouts/app.lte', '<main>@yield($slot)</main>');
+
+        $src = "@extends(\$layout)@section(\$slot)@include(\$view, ['n' => 1])@include('partials.' . \$kind)@endsection";
+        $this->assertSame(
+            '<main>[card 1][card 2]</main>',
+            $this->renderString($src, ['layout' => 'layouts.app', 'slot' => 'body', 'view' => 'partials.card', 'kind' => 'card', 'n' => 2])
+        );
+    }
+
+    public function test_dynamic_inline_section_push_and_stack_names(): void
+    {
+        $src = "@section(\$name, 'v')@yield(\$name)|@push(\$s)p@endpush@stack(\$s)";
+        $this->assertSame('v|p', $this->renderString($src, ['name' => 'x', 's' => 'js']));
+    }
+
+    public function test_legacy_unquoted_and_double_quoted_names_still_work(): void
+    {
+        $this->write('layouts/plain.lte', '[@yield("c")]');
+        $this->assertSame('[ok]', $this->renderString('@extends(layouts.plain)@section("c")ok@endsection'));
+    }
+
+    public function test_quote_in_name_cannot_break_out_of_generated_code(): void
+    {
+        $this->assertSame('', $this->renderString("@yield('a\\'); echo \"pwned\"; //')"));
+    }
 }

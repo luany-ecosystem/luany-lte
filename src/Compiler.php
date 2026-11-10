@@ -208,17 +208,17 @@ class Compiler
 
             // ── Layout system ─────────────────────────────────────────────────
             case 'extends':
-                $layout = trim($args, '\'"');
-                return "<?php \\Luany\\Lte\\SectionStack::setLayout('{$layout}'); ?>";
+                $layout = $this->nameExpr($args);
+                return "<?php \\Luany\\Lte\\SectionStack::setLayout({$layout}); ?>";
 
             case 'section':
                 if ($args === null) return '';
                 if ($this->hasInlineValue($args)) {
                     [$sectionName, $value] = $this->parseSectionArgs($args);
-                    return "<?php \\Luany\\Lte\\SectionStack::set('{$sectionName}', {$value}); ?>";
+                    return "<?php \\Luany\\Lte\\SectionStack::set({$sectionName}, {$value}); ?>";
                 }
-                $sectionName = trim($args, '\'"');
-                return "<?php \\Luany\\Lte\\SectionStack::start('{$sectionName}'); ?>";
+                $sectionName = $this->nameExpr($args);
+                return "<?php \\Luany\\Lte\\SectionStack::start({$sectionName}); ?>";
 
             case 'endsection':
             case 'stop':
@@ -228,7 +228,7 @@ class Compiler
                 $yieldArgs   = $this->parseYieldArgs($args);
                 $sectionName = $yieldArgs[0];
                 $default     = $yieldArgs[1] ?? "''";
-                return "<?php echo \\Luany\\Lte\\SectionStack::get('{$sectionName}', {$default}); ?>";
+                return "<?php echo \\Luany\\Lte\\SectionStack::get({$sectionName}, {$default}); ?>";
 
             // ── Include ───────────────────────────────────────────────────────
             case 'include':
@@ -237,15 +237,14 @@ class Compiler
                             . "ARRAY_FILTER_USE_KEY)";
 
                 if ($args !== null && $this->hasInlineValue($args)) {
-                    [$rawView, $extraData] = $this->parseSectionArgs($args);
-                    $viewName = trim($rawView, '\'"');
+                    [$viewName, $extraData] = $this->parseSectionArgs($args);
                     $data     = "array_merge({$parentVars}, {$extraData})";
                 } else {
-                    $viewName = trim((string) $args, '\'"');
+                    $viewName = $this->nameExpr($args);
                     $data     = $parentVars;
                 }
 
-                return "<?php echo \$__engine->render('{$viewName}', {$data}); ?>";
+                return "<?php echo \$__engine->render({$viewName}, {$data}); ?>";
 
             // ── Asset directives ──────────────────────────────────────────────
             //
@@ -287,13 +286,13 @@ class Compiler
 
             // ── Stack directives ──────────────────────────────────────────────
             case 'push':
-                $stackName = trim($args, '\'"');
-                return "<?php \Luany\Lte\SectionStack::startPush('{$stackName}'); ?>";
+                $stackName = $this->nameExpr($args);
+                return "<?php \Luany\Lte\SectionStack::startPush({$stackName}); ?>";
             case 'endpush':
                 return '<?php \Luany\Lte\SectionStack::endPush(); ?>';
             case 'stack':
-                $stackName = trim($args, '\'"');
-                return "<?php echo \Luany\Lte\SectionStack::getStack('{$stackName}'); ?>";
+                $stackName = $this->nameExpr($args);
+                return "<?php echo \Luany\Lte\SectionStack::getStack({$stackName}); ?>";
 
             // ── @json (Phase 5) ───────────────────────────────────────────────
             //
@@ -315,9 +314,9 @@ class Compiler
                 $safeFlags = 'JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE';
                 if ($args !== null && $this->hasInlineValue($args)) {
                     // @json($data, CUSTOM_FLAGS) — two arguments
-                    [$exprPart, $flagsPart] = $this->parseSectionArgs($args);
-                    $expr  = trim($exprPart);
-                    $flags = trim($flagsPart) . ' | ' . $safeFlags;
+                    $jsonArgs = ExpressionScanner::split($args);
+                    $expr     = $jsonArgs[0];
+                    $flags    = '(' . $jsonArgs[1] . ') | ' . $safeFlags;
                     return "<?php echo json_encode({$expr}, {$flags}); ?>";
                 }
                 // @json($data) — single argument
@@ -357,11 +356,11 @@ class Compiler
             //
             case 'component':
                 [$viewName, $dataExpr] = $this->parseComponentArgs($args);
-                return "<?php \\Luany\\Lte\\ComponentStack::startComponent(\$__engine, '{$viewName}', {$dataExpr}); ?>";
+                return "<?php \\Luany\\Lte\\ComponentStack::startComponent(\$__engine, {$viewName}, {$dataExpr}); ?>";
 
             case 'slot':
-                $slotName = $args !== null ? trim($args, '\'"') : '__default';
-                return "<?php \\Luany\\Lte\\ComponentStack::startSlot('{$slotName}'); ?>";
+                $slotName = $args !== null && trim($args) !== '' ? $this->nameExpr($args) : "'__default'";
+                return "<?php \\Luany\\Lte\\ComponentStack::startSlot({$slotName}); ?>";
 
             case 'endslot':
                 return '<?php \\Luany\\Lte\\ComponentStack::endSlot(); ?>';
@@ -415,8 +414,38 @@ class Compiler
     }
 
     /**
+     * Turn a view/section/stack name argument into a PHP expression.
+     *
+     *   'layouts.main' / "layouts.main" / layouts.main  → 'layouts.main'
+     *   $layout, $prefix . '.card', "x.$y"             → passed through unchanged
+     */
+    private function nameExpr(?string $arg): string
+    {
+        $arg = trim((string) $arg);
+
+        if ($arg === '') {
+            return "''";
+        }
+
+        $bare = '/^[A-Za-z0-9_.\-\/:]+$/';
+
+        if (ExpressionScanner::isStringLiteral($arg)) {
+            $inner = substr($arg, 1, -1);
+            return preg_match($bare, $inner) === 1 ? var_export($inner, true) : $arg;
+        }
+
+        // Legacy unquoted names: @extends(layouts.main)
+        if (preg_match($bare, $arg) === 1 && !is_numeric($arg)) {
+            return var_export($arg, true);
+        }
+
+        return $arg;
+    }
+
+    /**
      * Split "name, value" at the first top-level comma (strings and nested
-     * brackets aware). The name is unquoted; the value is returned verbatim.
+     * brackets aware). The name becomes a PHP expression (see nameExpr());
+     * the value is returned verbatim.
      *
      * @return array{0: string, 1: string}
      */
@@ -424,10 +453,10 @@ class Compiler
     {
         $parts = ExpressionScanner::split($args);
         if (count($parts) < 2) {
-            return [trim($args, '\'" '), "''"];
+            return [$this->nameExpr($args), "''"];
         }
 
-        $name  = trim(array_shift($parts), '\'" ');
+        $name  = $this->nameExpr(array_shift($parts));
         $value = implode(', ', $parts);
         return [$name, $value];
     }
@@ -435,11 +464,8 @@ class Compiler
     /** @return array{0: string, 1: string} */
     private function parseYieldArgs(?string $args): array
     {
-        if ($args === null) return ['', "''"];
-        if ($this->hasInlineValue($args)) {
-            return $this->parseSectionArgs($args);
-        }
-        return [trim($args, '\'"'), "''"];
+        if ($args === null) return ["''", "''"];
+        return $this->parseSectionArgs($args);
     }
 
     /**
@@ -450,14 +476,14 @@ class Compiler
     private function parseComponentArgs(?string $args): array
     {
         if ($args === null || trim($args) === '') {
-            return ['', '[]'];
+            return ["''", '[]'];
         }
 
         if ($this->hasInlineValue($args)) {
             return $this->parseSectionArgs($args);
         }
 
-        return [trim($args, '\'" '), '[]'];
+        return [$this->nameExpr($args), '[]'];
     }
 
     // ── Custom directives ──────────────────────────────────────────────────────
