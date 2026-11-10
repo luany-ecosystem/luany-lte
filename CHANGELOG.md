@@ -6,6 +6,44 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Security
+- Inline `@section('name', $value)` values and `@yield('name', $default)` defaults are now HTML-escaped (block sections are unchanged). `@class` escapes its class list. All escaping uses `ENT_QUOTES | ENT_SUBSTITUTE`, so invalid UTF-8 no longer renders as an empty string. (#11)
+- Compiled cache: writes are atomic (temp file + `rename()`); the default cache directory is now a per-user `sys_get_temp_dir()/lte_cache_<uid>` created `0700` instead of the shared `/tmp/lte_cache`, and is refused when it is a symlink or owned by another user. (#12)
+- View/section names are compiled as PHP literals, so a quote in a name can no longer break out of the generated code. (#6)
+
+### Added
+- `Htmlable` interface and `HtmlString` for intentionally raw values; `Escaper::escape()`.
+- `@@` renders a literal `@`; `@{{ ... }}` renders a literal `{{ ... }}`. (#4)
+- `@empty($x) ... @endempty` outside `@forelse`. (#9)
+- `TemplateSyntaxException` (extends `RuntimeException`) for malformed templates, with source line numbers.
+- `Engine::VERSION`, `Engine::getCachePath()`, `Compiler::isDirective()`, `Compiler::validate()`, `Compiler::signature()`, optional directive predicate for `Parser`.
+- Multi-level layouts: a layout may `@extends` another layout. (#7)
+
+### Fixed
+- Parser no longer hangs on `{!` not followed by `!`. (#1)
+- Newlines after echoes, directives and comments are preserved exactly. (#2)
+- Whitespace between a directive and `(` is accepted: `@if ($x)`. (#3)
+- `@` in plain text (emails, CSS `@media`) is no longer parsed as a directive. (#4)
+- `{{ }}`, `{!! !!}` and directive arguments are scanned string- and bracket-aware: `{{ '}}' }}`, `@json(['a' => 1, 'b' => 2])`, `@include('x', ['a' => 1, 'b' => 2])`. (#5)
+- Dynamic names work: `@include($view)`, `@extends($layout)`, `@section($name)`, `@yield`, `@push`, `@stack`, `@component`, `@slot`. (#6)
+- Nested sections; stray or mismatched `@endsection`/`@endpush` throw instead of closing foreign output buffers. (#8)
+- `@forelse` shows `@empty` for empty `Traversable`s/generators; `@endforelse` without `@empty` is valid. (#9)
+- Component/section/output-buffer state is unwound when a render throws. (#10)
+- Cache key includes the engine version and registered custom directives; same-second edits are detected. (#12)
+- `@extends` inside an included partial no longer hijacks the page layout. (#7)
+
+### Changed (behaviour)
+- Only built-in and registered directives are parsed; any other `@word` is output as text (previously echoed back almost verbatim). `@name` right after a letter/digit/underscore is text, except closers (`@end*`, `@else`, `@elseif`, `@stop`) and a directive directly following another directive.
+- Templates whose output relied on newlines being swallowed after directives will now contain those newlines.
+- Inline section values / yield defaults containing HTML are escaped; wrap trusted markup in `HtmlString`.
+- When a child view and a layout define the same section, the child's wins (previously the layout's later definition overwrote it).
+- Bare `@empty` outside `@forelse`, `@forelse` without `as`, and unbalanced `@section`/`@push` blocks now throw `TemplateSyntaxException`.
+- Existing compiled caches are ignored (new key format); the old `/tmp/lte_cache` directory can be deleted.
+
+---
+
 ## [1.0.0] — 2026-03-23
 
 ### Added
