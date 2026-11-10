@@ -131,4 +131,40 @@ class HardeningTest extends TestCase
         $ast = (new Parser())->parse('@if  ($a && $b)');
         $this->assertSame('$a && $b', $ast[0]['args']);
     }
+
+    // ── #4 '@' in plain text, @@ and @{{ }} escapes ──────────────────────────
+
+    public function test_emails_are_plain_text(): void
+    {
+        $this->assertSame('Mail dev@php.net or me@if.com', $this->renderString('Mail dev@php.net or me@if.com'));
+    }
+
+    public function test_unknown_at_words_are_plain_text(): void
+    {
+        $css = '@media (max-width: 600px) { a { color: red } } @import url(x.css); @ alone @';
+        $this->assertSame($css, $this->renderString($css));
+    }
+
+    public function test_double_at_escapes_directive(): void
+    {
+        $this->assertSame('Use @if($x) and @ and @foo', $this->renderString('Use @@if($x) and @@ and @@foo'));
+    }
+
+    public function test_at_echo_escape_outputs_literal_braces(): void
+    {
+        $this->assertSame('<p>{{ message }}</p>', $this->renderString('<p>@{{ message }}</p>'));
+    }
+
+    public function test_directive_after_word_char_only_for_closers(): void
+    {
+        $this->assertSame('Hi', $this->renderString('@if(true)Hi@endif'));
+        $this->assertSame('ab', $this->renderString('@if(true)a@endif@if(true)b@endif'));
+        $this->assertSame(' no', $this->renderString('@if(false)yes@else no@endif'));
+    }
+
+    public function test_custom_directive_is_recognised_and_others_are_text(): void
+    {
+        $this->engine->getCompiler()->directive('hello', fn (?string $a): string => "<?php echo 'Hello ' . {$a}; ?>");
+        $this->assertSame('Hello Ana @world', $this->renderString("@hello('Ana') @world"));
+    }
 }

@@ -35,10 +35,36 @@ class Parser
         'endisset', 'endifempty', 'parent',
     ];
 
+    /** @var \Closure(string): bool */
+    private \Closure $isDirective;
+
     private string $source;
     private int    $position = 0;
     private int    $length   = 0;
     private int    $line     = 1;   // current 1-based line counter
+    private int    $directiveEnd = -1; // offset just past the last parsed directive
+
+    /**
+     * @param (callable(string): bool)|null $isDirective  Decides whether `@name` is a
+     *        directive. Defaults to the built-in directive set; the Engine passes
+     *        Compiler::isDirective() so custom directives are recognised too.
+     */
+    public function __construct(?callable $isDirective = null)
+    {
+        $this->setDirectiveResolver($isDirective);
+    }
+
+    /**
+     * Replace the predicate that decides whether `@name` is a directive.
+     *
+     * @param (callable(string): bool)|null $isDirective
+     */
+    public function setDirectiveResolver(?callable $isDirective): void
+    {
+        $this->isDirective = $isDirective !== null
+            ? \Closure::fromCallable($isDirective)
+            : static fn (string $name): bool => in_array($name, Compiler::BUILTIN_DIRECTIVES, true);
+    }
 
     /**
      * Parse LTE source into AST.
@@ -52,6 +78,7 @@ class Parser
         $this->position = 0;
         $this->length   = strlen($source);
         $this->line     = 1;
+        $this->directiveEnd = -1;
 
         $nodes = [];
 
@@ -82,7 +109,19 @@ class Parser
         if ($this->match('{{--')) return $this->parseComment();
         if ($this->match('{!!'))  return $this->parseRawEcho();
         if ($this->match('{{'))   return $this->parseEcho();
-        if ($this->match('@'))    return $this->parseDirective();
+        if ($this->source[$this->position] === '@') {
+            switch ($this->atKind()) {
+                case 'escape_at':
+                    return $this->parseEscapedAt();
+                case 'escape_echo':
+                    return $this->parseEscapedEcho();
+                case 'directive':
+                    $this->position++; // skip '@'
+                    $node = $this->parseDirective();
+                    $this->directiveEnd = $this->position;
+                    return $node;
+            }
+        }
         return $this->parseText();
     }
 
@@ -256,6 +295,49 @@ class Parser
         }
     }
 
+    // ── Escapes @@ and @{{ ... }} ──────────────────────────────────────────────
+
+    /**
+     * `@@name` → literal text `@name` (the name is consumed so it is never
+     * parsed as a directive); a lone `@@` → `@`.
+     *
+     * @return array<string, mixed>
+     */
+    private function parseEscapedAt(): array
+    {
+        $startLine       = $this->line;
+        $this->position += 2; // skip '@@'
+        $nameEnd         = $this->scanWord($this->position);
+        $text            = '@' . substr($this->source, $this->position, $nameEnd - $this->position);
+        $this->position  = $nameEnd;
+
+        return ['type' => 'text', 'content' => $text, 'line' => $startLine];
+    }
+
+    /**
+     * `@{{ ... }}` → literal text `{{ ... }}` (for client-side frameworks).
+     *
+     * @return array<string, mixed>
+     */
+    private function parseEscapedEcho(): array
+    {
+        $startLine = $this->line;
+        $start     = $this->position + 1; // keep the '{{'
+        $end       = strpos($this->source, '}}', $start + 2);
+        if ($end === false) {
+            throw new \RuntimeException("Unclosed escaped echo tag on line {$startLine}.");
+        }
+
+        $this->advanceLinesTo($end + 2);
+        $this->position = $end + 2;
+
+        return [
+            'type'    => 'text',
+            'content' => substr($this->source, $start, $end + 2 - $start),
+            'line'    => $startLine,
+        ];
+    }
+
     // ── Plain text ─────────────────────────────────────────────────────────────
 
     /** @return array<string, mixed> */
@@ -287,6 +369,68 @@ class Parser
 
     // ── Helpers ────────────────────────────────────────────────────────────────
 
+    private static function isClosingDirective(string $name): bool
+    {
+        return str_starts_with($name, 'end')
+            || in_array($name, ['else', 'elseif', 'stop', 'show'], true);
+    }
+
+    private function isWordChar(string $char): bool
+    {
+        return $char !== '' && (ctype_alnum($char) || $char === '_');
+    }
+
+    /** Return the offset just past the run of word characters starting at $pos. */
+    private function scanWord(int $pos): int
+    {
+        while ($pos < $this->length && $this->isWordChar($this->source[$pos])) {
+            $pos++;
+        }
+        return $pos;
+    }
+
+    /**
+     * Classify the '@' at the current position.
+     *
+     * Returns null when the '@' is plain text: when the name is not a known
+     * directive (e.g. CSS `@media`), or when it follows a word character
+     * (e.g. `dev@php.net`) — except for closing/branch directives such as
+     * `@endsection` / `@else`, which may directly follow text.
+     */
+    private function atKind(): ?string
+    {
+        $pos = $this->position;
+
+        // A word character right before '@' makes it text — unless that word is
+        // the directive we just parsed (`@endpush@push`, `@endsection@style`).
+        $afterWord = $pos > 0
+            && $pos !== $this->directiveEnd
+            && $this->isWordChar($this->source[$pos - 1]);
+
+        $next = $this->source[$pos + 1] ?? '';
+        if (!$afterWord && $next === '@') {
+            return 'escape_at';
+        }
+        if (!$afterWord && $next === '{' && ($this->source[$pos + 2] ?? '') === '{') {
+            return 'escape_echo';
+        }
+
+        $nameEnd = $this->scanWord($pos + 1);
+        if ($nameEnd === $pos + 1) {
+            return null;
+        }
+
+        $name = substr($this->source, $pos + 1, $nameEnd - $pos - 1);
+
+        // After a word character only closing/branch directives are honoured, so
+        // `Hello@endsection` keeps working while `dev@php.net` / `me@if.com` stay text.
+        if ($afterWord && !self::isClosingDirective($name)) {
+            return null;
+        }
+
+        return ($this->isDirective)($name) ? 'directive' : null;
+    }
+
     /**
      * Whether a token ({{, {!!, @) starts at the current position.
      * Must agree exactly with the dispatch in parseNext().
@@ -296,7 +440,7 @@ class Parser
         $char = $this->source[$this->position];
 
         if ($char === '@') {
-            return true;
+            return $this->atKind() !== null;
         }
 
         if ($char === '{') {

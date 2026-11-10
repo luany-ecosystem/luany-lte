@@ -35,6 +35,24 @@ namespace Luany\Lte;
  */
 class Compiler
 {
+    /** Directive names handled natively by compileDirective(). */
+    public const BUILTIN_DIRECTIVES = [
+        'if', 'elseif', 'else', 'endif', 'unless', 'endunless',
+        'foreach', 'endforeach', 'for', 'endfor', 'while', 'endwhile',
+        'forelse', 'empty', 'endforelse',
+        'php', 'endphp',
+        'csrf', 'method',
+        'auth', 'endauth', 'guest', 'endguest',
+        'extends', 'section', 'endsection', 'stop', 'yield',
+        'include',
+        'style', 'endstyle', 'script', 'endscript', 'styles', 'scripts',
+        'push', 'endpush', 'stack',
+        'json', 'class',
+        'component', 'slot', 'endslot', 'endcomponent',
+        'dump', 'dd',
+        'isset', 'endisset', 'ifempty', 'endifempty',
+    ];
+
     /** @var array<string, callable> */
     private array $directives  = [];
     private int   $forelseDepth = 0;
@@ -499,6 +517,15 @@ class Compiler
     public function directive(string $name, callable $handler): void
     {
         $this->directives[$name] = $handler;
+    }
+
+    /**
+     * Whether `@{$name}` is a directive (built-in or registered custom).
+     * Any other `@word` in a template is left as literal text.
+     */
+    public function isDirective(string $name): bool
+    {
+        return isset($this->directives[$name]) || in_array($name, self::BUILTIN_DIRECTIVES, true);
     }
 
     private function registerDefaultDirectives(): void

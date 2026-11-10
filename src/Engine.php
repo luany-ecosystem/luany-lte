@@ -54,8 +54,9 @@ class Engine
             : sys_get_temp_dir() . '/lte_cache';
         $this->autoReload = $autoReload;
 
-        $this->parser   = new Parser();
         $this->compiler = new Compiler();
+        $compiler       = $this->compiler;
+        $this->parser   = new Parser(static fn (string $name): bool => $compiler->isDirective($name));
 
         if (!is_dir($this->cachePath)) {
             mkdir($this->cachePath, 0755, true);
