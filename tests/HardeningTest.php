@@ -426,4 +426,93 @@ class HardeningTest extends TestCase
         $this->expectExceptionMessage('@empty without arguments must be inside @forelse on line 2.');
         $this->renderString("x\n@empty y");
     }
+
+    // ── #12 compiled cache ────────────────────────────────────────────────────
+
+    public function test_default_cache_dir_is_private_per_user(): void
+    {
+        $engine = new Engine($this->viewsDir);
+        $dir    = $engine->getCachePath();
+
+        $this->assertNotSame(sys_get_temp_dir() . '/lte_cache', $dir);
+        $this->assertDirectoryExists($dir);
+        $this->assertFalse(is_link($dir));
+        if (function_exists('posix_geteuid')) {
+            $this->assertStringEndsWith('/lte_cache_' . posix_geteuid(), $dir);
+            $this->assertSame(posix_geteuid(), fileowner($dir));
+            $this->assertSame(0700, fileperms($dir) & 0777);
+        }
+    }
+
+    public function test_symlinked_default_cache_dir_is_refused(): void
+    {
+        $method = new \ReflectionMethod(Engine::class, 'assertPrivateDirectory');
+        $link   = $this->cacheDir . '/link';
+        symlink($this->cacheDir, $link);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('not a real directory');
+        $method->invoke(null, $link);
+    }
+
+    public function test_loose_permissions_on_owned_cache_dir_are_tightened(): void
+    {
+        if (!function_exists('posix_geteuid')) {
+            $this->markTestSkipped('posix extension required');
+        }
+        $dir = $this->cacheDir . '/loose';
+        mkdir($dir);
+        chmod($dir, 0777);
+
+        (new \ReflectionMethod(Engine::class, 'assertPrivateDirectory'))->invoke(null, $dir);
+        clearstatcache();
+        $this->assertSame(0700, fileperms($dir) & 0777);
+    }
+
+    public function test_cache_write_is_atomic_and_leaves_no_temp_files(): void
+    {
+        $engine = new Engine($this->viewsDir, $this->cacheDir, false);
+        $this->write('c.lte', 'v1');
+        $this->assertSame('v1', $engine->render('c'));
+
+        $this->assertCount(1, glob($this->cacheDir . '/*.php') ?: []);
+        $this->assertSame([], glob($this->cacheDir . '/*.tmp') ?: []);
+    }
+
+    public function test_same_second_edit_is_recompiled(): void
+    {
+        $engine = new Engine($this->viewsDir, $this->cacheDir, false);
+        $this->write('c.lte', 'v1');
+        $this->assertSame('v1', $engine->render('c'));
+
+        $this->write('c.lte', 'v2'); // same second: mtime unchanged at 1s resolution
+        $this->assertSame('v2', $engine->render('c'));
+    }
+
+    public function test_up_to_date_cache_is_reused(): void
+    {
+        $engine = new Engine($this->viewsDir, $this->cacheDir, false);
+        $this->write('c.lte', 'v1');
+        touch($this->viewsDir . '/c.lte', time() - 100);
+        $this->assertSame('v1', $engine->render('c'));
+
+        $cached = glob($this->cacheDir . '/*.php') ?: [];
+        $this->assertCount(1, $cached);
+        $mtime = filemtime($cached[0]);
+        file_put_contents($cached[0], 'from-cache');
+        touch($cached[0], (int) $mtime);
+
+        $this->assertSame('from-cache', $engine->render('c'));
+    }
+
+    public function test_registering_directive_invalidates_cache(): void
+    {
+        $engine = new Engine($this->viewsDir, $this->cacheDir, false);
+        $this->write('d.lte', '@shout(\'hi\')');
+        touch($this->viewsDir . '/d.lte', time() - 100);
+        $this->assertSame("@shout('hi')", $engine->render('d'));
+
+        $engine->getCompiler()->directive('shout', fn (string $a): string => "<?php echo strtoupper({$a}); ?>");
+        $this->assertSame('HI', $engine->render('d'));
+    }
 }

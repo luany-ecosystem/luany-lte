@@ -593,6 +593,17 @@ class Compiler
     }
 
     /**
+     * Stable fingerprint of the registered custom directive set, used in the
+     * Engine's compiled-cache key.
+     */
+    public function signature(): string
+    {
+        $names = array_keys($this->directives);
+        sort($names);
+        return implode(',', $names);
+    }
+
+    /**
      * Whether `@{$name}` is a directive (built-in or registered custom).
      * Any other `@word` in a template is left as literal text.
      */
