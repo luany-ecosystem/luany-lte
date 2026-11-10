@@ -292,4 +292,70 @@ class HardeningTest extends TestCase
             $this->renderString('@method($m)', ['m' => '">x'])
         );
     }
+
+    // ── #8 section stack ──────────────────────────────────────────────────────
+
+    public function test_nested_sections_keep_outer_section(): void
+    {
+        $this->write('layouts/n.lte', '[@yield("outer")][@yield("inner")]');
+        $src = "@extends('layouts.n')@section('outer')a @section('inner')b@endsection c@endsection";
+        $this->assertSame('[a  c][b]', $this->renderString($src));
+    }
+
+    public function test_push_inside_section(): void
+    {
+        $this->write('layouts/p.lte', '[@yield("c")][@stack("js")]');
+        $this->assertSame('[x  y][j]', $this->renderString("@extends('layouts.p')@section('c')x @push('js')j@endpush y@endsection"));
+    }
+
+    public function test_stray_endsection_throws_with_line(): void
+    {
+        $this->expectException(\Luany\Lte\TemplateSyntaxException::class);
+        $this->expectExceptionMessage('Unexpected @endsection on line 2: no open @section.');
+        $this->renderString("a\n@endsection b");
+    }
+
+    public function test_stray_endpush_does_not_swallow_outer_buffer(): void
+    {
+        $level = ob_get_level();
+        ob_start();
+        echo '[OUTER]';
+        try {
+            $this->renderString('a@endpush b');
+            $this->fail('Expected TemplateSyntaxException');
+        } catch (\Luany\Lte\TemplateSyntaxException $e) {
+            $this->assertStringContainsString('Unexpected @endpush on line 1', $e->getMessage());
+        }
+        $this->assertSame($level + 1, ob_get_level());
+        $this->assertSame('[OUTER]', ob_get_clean());
+    }
+
+    public function test_mismatched_and_unclosed_blocks_throw(): void
+    {
+        try {
+            $this->renderString("@section('a')\n@push('b')\n@endsection");
+            $this->fail('Expected TemplateSyntaxException');
+        } catch (\Luany\Lte\TemplateSyntaxException $e) {
+            $this->assertStringContainsString('Unexpected @endsection on line 3: @push opened on line 2 is still open.', $e->getMessage());
+        }
+
+        $this->expectExceptionMessage('Unclosed @section opened on line 1: missing @endsection.');
+        $this->renderString("@section('a') never closed");
+    }
+
+    public function test_runtime_stray_end_throws_and_preserves_buffers(): void
+    {
+        $level = ob_get_level();
+        ob_start();
+        echo 'keep';
+        try {
+            \Luany\Lte\SectionStack::reset();
+            \Luany\Lte\SectionStack::end();
+            $this->fail('Expected TemplateSyntaxException');
+        } catch (\Luany\Lte\TemplateSyntaxException $e) {
+            $this->assertSame('Cannot use @endsection without a matching @section.', $e->getMessage());
+        }
+        $this->assertSame($level + 1, ob_get_level());
+        $this->assertSame('keep', ob_get_clean());
+    }
 }

@@ -125,7 +125,7 @@ class Parser
     {
         $end = strpos($this->source, '--}}', $this->position);
         if ($end === false) {
-            throw new \RuntimeException(
+            throw new TemplateSyntaxException(
                 "Unclosed comment on line {$this->line}."
             );
         }
@@ -145,7 +145,7 @@ class Parser
         $startLine = $this->line;
         $end = $this->findClosing('}}');
         if ($end === null) {
-            throw new \RuntimeException(
+            throw new TemplateSyntaxException(
                 "Unclosed echo tag on line {$startLine}."
             );
         }
@@ -165,7 +165,7 @@ class Parser
         $startLine = $this->line;
         $end = $this->findClosing('!!}');
         if ($end === null) {
-            throw new \RuntimeException(
+            throw new TemplateSyntaxException(
                 "Unclosed raw echo tag on line {$startLine}."
             );
         }
@@ -200,7 +200,7 @@ class Parser
 
             $end = strpos($this->source, '@endphp', $this->position);
             if ($end === false) {
-                throw new \RuntimeException(
+                throw new TemplateSyntaxException(
                     "Unclosed @php block — missing @endphp (opened on line {$startLine})."
                 );
             }
@@ -237,7 +237,7 @@ class Parser
         $end   = ExpressionScanner::find($this->source, $start, ')');
 
         if ($end === null) {
-            throw new \RuntimeException(
+            throw new TemplateSyntaxException(
                 "Unclosed directive arguments on line {$startLine}."
             );
         }
@@ -295,7 +295,7 @@ class Parser
         $start     = $this->position + 1; // keep the '{{'
         $end       = strpos($this->source, '}}', $start + 2);
         if ($end === false) {
-            throw new \RuntimeException("Unclosed escaped echo tag on line {$startLine}.");
+            throw new TemplateSyntaxException("Unclosed escaped echo tag on line {$startLine}.");
         }
 
         $this->advanceLinesTo($end + 2);
@@ -346,7 +346,7 @@ class Parser
     private function assertProgress(int $before): void
     {
         if ($this->position <= $before) {
-            throw new \RuntimeException(
+            throw new TemplateSyntaxException(
                 "LTE parser made no progress at offset {$before} (line {$this->line})."
             );
         }

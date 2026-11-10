@@ -80,6 +80,62 @@ class Compiler
     }
 
     /**
+     * Compile-time balance check for @section/@endsection(@stop) and
+     * @push/@endpush, so a stray or mismatched closer is reported with its
+     * source line instead of corrupting output buffers at runtime.
+     *
+     * Called by the Engine for complete templates; compile() itself does not
+     * validate, so template fragments can still be compiled on their own.
+     *
+     * @param array<int, array<string, mixed>> $ast
+     * @throws TemplateSyntaxException
+     */
+    public function validate(array $ast): void
+    {
+        $closers = ['endsection' => 'section', 'stop' => 'section', 'endpush' => 'push'];
+        $open    = [];
+
+        foreach ($ast as $node) {
+            if (($node['type'] ?? null) !== 'directive' || isset($this->directives[$node['name']])) {
+                continue;
+            }
+
+            $name = $node['name'];
+            $line = isset($node['line']) ? " on line {$node['line']}" : '';
+
+            if ($name === 'section' || $name === 'push') {
+                $args = $node['args'];
+                if ($args === null || trim($args) === '' || ($name === 'section' && $this->hasInlineValue($args))) {
+                    continue; // inline section or no-op: not a block
+                }
+                $open[] = ['type' => $name, 'line' => $line];
+                continue;
+            }
+
+            if (isset($closers[$name])) {
+                $expected = $closers[$name];
+                $top      = end($open);
+
+                if ($top === false) {
+                    throw new TemplateSyntaxException("Unexpected @{$name}{$line}: no open @{$expected}.");
+                }
+                if ($top['type'] !== $expected) {
+                    throw new TemplateSyntaxException(
+                        "Unexpected @{$name}{$line}: @{$top['type']} opened{$top['line']} is still open."
+                    );
+                }
+                array_pop($open);
+            }
+        }
+
+        $top = end($open);
+        if ($top !== false) {
+            $closer = $top['type'] === 'section' ? '@endsection' : '@endpush';
+            throw new TemplateSyntaxException("Unclosed @{$top['type']} opened{$top['line']}: missing {$closer}.");
+        }
+    }
+
+    /**
      * Concatenate a compiled piece, preserving template whitespace.
      *
      * PHP swallows a single newline ("\n" or "\r\n") that immediately follows

@@ -209,9 +209,11 @@ class Engine
 
         try {
             $ast = $this->parser->parse($source);
+            $this->compiler->validate($ast);
             $php = $this->compiler->compile($ast);
         } catch (\Throwable $e) {
-            throw new \RuntimeException(
+            $class = $e instanceof TemplateSyntaxException ? TemplateSyntaxException::class : \RuntimeException::class;
+            throw new $class(
                 "LTE compilation error in view [{$viewName}]: " . $e->getMessage(),
                 0,
                 $e
@@ -288,7 +290,22 @@ class Engine
                 $e
             );
         }
-        return ob_get_clean();
+
+        // A view must leave exactly the one buffer we opened. Anything else means
+        // an unbalanced block (@section/@push/@component/@style) and returning
+        // ob_get_clean() would hand back somebody else's buffer.
+        if (ob_get_level() !== $__lte_ob_level + 1) {
+            while (ob_get_level() > $__lte_ob_level) {
+                ob_end_clean();
+            }
+            $viewLabel = basename($__lte_source !== '' ? $__lte_source : $__lte_path);
+            throw new TemplateSyntaxException(
+                "LTE render error in [{$viewLabel}]: unbalanced output buffers — "
+                . 'a @section, @push, @component, @style or @script block was not closed.'
+            );
+        }
+
+        return (string) ob_get_clean();
     }
 
     /**
