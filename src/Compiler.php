@@ -115,7 +115,7 @@ class Compiler
 
             case 'echo':
                 return [$marker,
-                    "<?php echo htmlspecialchars((string)({$node['expression']} ?? ''), ENT_QUOTES, 'UTF-8'); ?>"];
+                    "<?php echo \\Luany\\Lte\\Escaper::escape({$node['expression']} ?? ''); ?>"];
 
             case 'raw_echo':
                 return [$marker, "<?php echo {$node['expression']}; ?>"];
@@ -197,8 +197,13 @@ class Compiler
                     . 'ENT_QUOTES, \'UTF-8\'); ?>">';
 
             case 'method':
-                $m = strtoupper(trim($args, '\'"'));
-                return '<input type="hidden" name="_method" value="' . $m . '">';
+                $methodArg = trim((string) $args);
+                if (ExpressionScanner::isStringLiteral($methodArg) || preg_match('/^[A-Za-z]+$/', $methodArg) === 1) {
+                    $m = htmlspecialchars(strtoupper(trim($methodArg, '\'"')), Escaper::FLAGS, 'UTF-8');
+                    return '<input type="hidden" name="_method" value="' . $m . '">';
+                }
+                return '<input type="hidden" name="_method" value="<?php echo \\Luany\\Lte\\Escaper::escape(strtoupper((string)('
+                    . $methodArg . '))); ?>">';
 
             // ── Auth guards ───────────────────────────────────────────────────
             case 'auth':    return "<?php if(isset(\$_SESSION['user_id'])): ?>";
@@ -215,7 +220,7 @@ class Compiler
                 if ($args === null) return '';
                 if ($this->hasInlineValue($args)) {
                     [$sectionName, $value] = $this->parseSectionArgs($args);
-                    return "<?php \\Luany\\Lte\\SectionStack::set({$sectionName}, {$value}); ?>";
+                    return "<?php \\Luany\\Lte\\SectionStack::set({$sectionName}, \\Luany\\Lte\\Escaper::escape({$value})); ?>";
                 }
                 $sectionName = $this->nameExpr($args);
                 return "<?php \\Luany\\Lte\\SectionStack::start({$sectionName}); ?>";
@@ -228,7 +233,7 @@ class Compiler
                 $yieldArgs   = $this->parseYieldArgs($args);
                 $sectionName = $yieldArgs[0];
                 $default     = $yieldArgs[1] ?? "''";
-                return "<?php echo \\Luany\\Lte\\SectionStack::get({$sectionName}, {$default}); ?>";
+                return "<?php echo \\Luany\\Lte\\SectionStack::get({$sectionName}, \\Luany\\Lte\\Escaper::escape({$default})); ?>";
 
             // ── Include ───────────────────────────────────────────────────────
             case 'include':

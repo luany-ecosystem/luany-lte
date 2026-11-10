@@ -244,4 +244,52 @@ class HardeningTest extends TestCase
     {
         $this->assertSame('', $this->renderString("@yield('a\\'); echo \"pwned\"; //')"));
     }
+
+    // ── #11 XSS ───────────────────────────────────────────────────────────────
+
+    public function test_inline_section_value_is_escaped(): void
+    {
+        $this->write('layouts/x.lte', '<title>@yield("title")</title>@yield("body")');
+        $src = "@extends('layouts.x')@section('title', \$t)@section('body')<b>{{ \$t }}</b>@endsection";
+        $this->assertSame(
+            '<title>&lt;script&gt;alert(1)&lt;/script&gt;</title><b>&lt;script&gt;alert(1)&lt;/script&gt;</b>',
+            $this->renderString($src, ['t' => '<script>alert(1)</script>'])
+        );
+    }
+
+    public function test_yield_default_is_escaped(): void
+    {
+        $this->assertSame('&quot;&gt;&lt;img src=x onerror=alert(1)&gt;', $this->renderString('@yield("missing", $d)', ['d' => '"><img src=x onerror=alert(1)>']));
+    }
+
+    public function test_htmlable_values_are_not_escaped(): void
+    {
+        $html = new \Luany\Lte\HtmlString('<em>Home</em>');
+        $this->assertSame('<em>Home</em>|<em>Home</em>|<em>Home</em>', $this->renderString(
+            "@section('t', \$h)@yield('t')|{{ \$h }}|@yield('none', \$h)",
+            ['h' => $html]
+        ));
+    }
+
+    public function test_class_directive_escapes_class_names(): void
+    {
+        $this->assertSame(
+            '<div class="a &quot; onmouseover=&quot;alert(1)"></div>',
+            $this->renderString('<div @class([\'a\', $c => true])></div>', ['c' => '" onmouseover="alert(1)'])
+        );
+    }
+
+    public function test_echo_substitutes_invalid_utf8_instead_of_emptying(): void
+    {
+        $this->assertSame("a\u{FFFD}b&#039;", $this->renderString('{{ $s }}', ['s' => "a\xC3b'"]));
+    }
+
+    public function test_method_directive_is_escaped_and_supports_expressions(): void
+    {
+        $this->assertSame('<input type="hidden" name="_method" value="PUT">', $this->renderString("@method('put')"));
+        $this->assertSame(
+            '<input type="hidden" name="_method" value="&quot;&gt;X">',
+            $this->renderString('@method($m)', ['m' => '">x'])
+        );
+    }
 }

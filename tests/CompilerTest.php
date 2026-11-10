@@ -32,12 +32,11 @@ class CompilerTest extends TestCase
 
     // ── Echo output ───────────────────────────────────────────────────────────
 
-    public function test_echo_compiles_with_htmlspecialchars(): void
+    public function test_echo_compiles_with_escaper(): void
     {
         $out = $this->compiler->compile([['type' => 'echo', 'expression' => '$name']]);
-        $this->assertStringContainsString('htmlspecialchars', $out);
+        $this->assertStringContainsString('Escaper::escape', $out);
         $this->assertStringContainsString('$name', $out);
-        $this->assertStringContainsString('ENT_QUOTES', $out);
     }
 
     public function test_raw_echo_compiles_without_escaping(): void
