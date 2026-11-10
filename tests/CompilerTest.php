@@ -199,8 +199,9 @@ class CompilerTest extends TestCase
         $out = $this->compile($this->dir('csrf'));
         $this->assertStringContainsString('<input', $out);
         $this->assertStringContainsString('type="hidden"', $out);
-        $this->assertStringContainsString('name="csrf_token"', $out);
-        $this->assertStringContainsString('htmlspecialchars', $out);
+        $this->assertStringContainsString('name="_token"', $out);
+        $this->assertStringContainsString("_csrf_token", $out);
+        $this->assertStringContainsString('Escaper::escape', $out);
     }
 
     public function test_method_generates_hidden_input_uppercased(): void

@@ -278,11 +278,12 @@ class Compiler
 
             // ── Security ──────────────────────────────────────────────────────
             case 'csrf':
-                return '<input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars('
-                    . '(string)(isset($_SESSION[\'csrf_token\']) '
-                    . '? $_SESSION[\'csrf_token\'] '
-                    . ': ($_SESSION[\'csrf_token\'] = bin2hex(random_bytes(32)))), '
-                    . 'ENT_QUOTES, \'UTF-8\'); ?>">';
+                // Ecosystem convention: field "_token", session key "_csrf_token".
+                // Uses the framework's csrf_token() helper when available.
+                return '<input type="hidden" name="_token" value="<?php echo \\Luany\\Lte\\Escaper::escape('
+                    . '\\function_exists(\'csrf_token\') ? (string) \\csrf_token() '
+                    . ': (string) ($_SESSION[\'_csrf_token\'] ??= \\bin2hex(\\random_bytes(32))))'
+                    . '; ?>">';
 
             case 'method':
                 $methodArg = trim((string) $args);
