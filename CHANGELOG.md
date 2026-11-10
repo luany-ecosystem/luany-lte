@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.1.0] — 2026-11-10
 
 ### Security
 - `@dump` / `@dd` are no-ops when `Runtime::setDebug(false)` (luany/framework wires this to `APP_DEBUG`). `@auth` / `@guest` go through `Runtime::check()`, configurable with `Runtime::setAuthResolver()` (default: `$_SESSION['user_id']`). (#14)
