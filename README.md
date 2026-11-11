@@ -1,6 +1,6 @@
 # luany/lte
 
-**AST-compiled template engine for PHP. Zero regex. Compiler-grade templating.**
+**AST-compiled template engine for PHP. Hand-written parser, compile-time validation, escaped output by default.**
 
 **Version**: v1.0.0 &nbsp;|&nbsp; **PHP**: >= 8.2 &nbsp;|&nbsp; **License**: MIT
 **Author**: António Ambrósio Ngola &nbsp;|&nbsp; **Org**: [luany-ecosystem](https://github.com/luany-ecosystem)
@@ -34,17 +34,21 @@
 
 ## 1. Overview
 
-LTE (Luany Template Engine) compiles `.lte` templates to PHP via a hand-written AST parser. There is **no regex** in the parsing pipeline — every token is identified character-by-character.
+LTE (Luany Template Engine) compiles `.lte` templates to PHP. A hand-written,
+character-by-character parser (no regex) produces tokens; a tree builder turns
+them into a real syntax tree and validates it **before** any PHP is generated.
 
 **Render pipeline:**
 
 ```
-.lte source -> Parser (AST) -> Compiler (PHP string) -> cache file -> evaluate -> HTML
+.lte source -> Parser (tokens + line/column) -> TreeBuilder (AST, validation)
+            -> Compiler (PHP) -> cache file -> evaluate -> HTML
 ```
 
-- `Parser` — tokenises source into AST nodes: `text`, `echo`, `raw_echo`, `php_block`, `directive`
-- `Compiler` — translates AST nodes to PHP code strings
-- `Engine` — orchestrates compile, cache, evaluate, resolves layouts and components
+- `Parser` — tokens: `text`, `echo`, `raw_echo`, `php_block`, `directive`, each with line and column
+- `Ast\TreeBuilder` — nests blocks (`@if`/`@elseif`/`@else`, `@forelse`/`@empty`, `@section`, `@component`/`@slot`, …) into `Ast\BlockNode`s and checks structure and embedded PHP
+- `Compiler` — turns the tree into PHP
+- `Engine` — orchestrates compile, cache, evaluate, resolves layouts and components; `Engine::parseView()` returns the tree for tooling
 
 ---
 
@@ -384,10 +388,33 @@ The handler receives the raw argument string (content inside the parentheses) an
 
 ## 19. Error Reporting
 
-**Compilation errors** include the view name and source line:
+**Compilation errors** are found before the template runs and include the view
+name, line and column (`TemplateSyntaxException::$view`, `$templateLine`,
+`$templateColumn`):
 
 ```
-LTE compilation error in view [pages.home]: Unclosed echo tag on line 12.
+LTE compilation error in view [pages.users]: Unclosed @foreach: missing @endforeach (line 12, column 5).
+LTE compilation error in view [pages.users]: Unexpected @endif: @foreach opened on line 12 is still open (expected @endforeach) (line 20, column 1).
+LTE compilation error in view [pages.users]: Unexpected @else inside @foreach (line 12) (line 15, column 3).
+LTE compilation error in view [pages.users]: @include requires arguments, e.g. @include(…) (line 3, column 1).
+LTE compilation error in view [pages.users]: PHP syntax error in {{ }} on line 7, column 9: syntax error, unexpected token "}".
+```
+
+What is checked at compile time:
+
+- every block is closed by the right directive, and closers are not stray or crossed
+- `@elseif` / `@else` only inside `@if`-style blocks, nothing after `@else`; bare `@empty` only once inside `@forelse`
+- directives that need arguments have them
+- the PHP in `{{ }}`, `{!! !!}`, `@php` and directive arguments is valid (PHP's own parser, nothing is executed)
+- a closer glued to text (`Title@endslotBody`) gets a hint to separate them
+
+Directives you register with `directive()` are not validated.
+
+**Tooling** can get the tree without rendering:
+
+```php
+$tree = $engine->parseView('pages.home');   // Luany\Lte\Ast\Template
+$tree->walk(fn ($node, int $depth) => /* … */);
 ```
 
 **Runtime errors** include the `.lte` source line number:

@@ -75,7 +75,7 @@ class HardeningTest extends TestCase
     public function test_parser_text_node_for_brace_bang(): void
     {
         $ast = (new Parser())->parse('{!x');
-        $this->assertSame([['type' => 'text', 'content' => '{!x', 'line' => 1]], $ast);
+        $this->assertSame([['type' => 'text', 'content' => '{!x', 'line' => 1, 'column' => 1]], $ast);
     }
 
     // ── #2 newlines after echoes/directives ───────────────────────────────────
@@ -311,7 +311,7 @@ class HardeningTest extends TestCase
     public function test_stray_endsection_throws_with_line(): void
     {
         $this->expectException(\Luany\Lte\TemplateSyntaxException::class);
-        $this->expectExceptionMessage('Unexpected @endsection on line 2: no open @section.');
+        $this->expectExceptionMessage('Unexpected @endsection: there is no open block to close (line 2, column 1).');
         $this->renderString("a\n@endsection b");
     }
 
@@ -324,7 +324,8 @@ class HardeningTest extends TestCase
             $this->renderString('a@endpush b');
             $this->fail('Expected TemplateSyntaxException');
         } catch (\Luany\Lte\TemplateSyntaxException $e) {
-            $this->assertStringContainsString('Unexpected @endpush on line 1', $e->getMessage());
+            $this->assertStringContainsString('Unexpected @endpush: there is no open block to close (line 1', $e->getMessage());
+            $this->assertSame(1, $e->templateLine);
         }
         $this->assertSame($level + 1, ob_get_level());
         $this->assertSame('[OUTER]', ob_get_clean());
@@ -336,10 +337,11 @@ class HardeningTest extends TestCase
             $this->renderString("@section('a')\n@push('b')\n@endsection");
             $this->fail('Expected TemplateSyntaxException');
         } catch (\Luany\Lte\TemplateSyntaxException $e) {
-            $this->assertStringContainsString('Unexpected @endsection on line 3: @push opened on line 2 is still open.', $e->getMessage());
+            $this->assertStringContainsString('Unexpected @endsection: @push opened on line 2 is still open', $e->getMessage());
+            $this->assertSame(3, $e->templateLine);
         }
 
-        $this->expectExceptionMessage('Unclosed @section opened on line 1: missing @endsection.');
+        $this->expectExceptionMessage('Unclosed @section: missing @endsection or @stop (line 1, column 1).');
         $this->renderString("@section('a') never closed");
     }
 
@@ -423,7 +425,7 @@ class HardeningTest extends TestCase
     public function test_bare_empty_outside_forelse_is_a_syntax_error(): void
     {
         $this->expectException(\Luany\Lte\TemplateSyntaxException::class);
-        $this->expectExceptionMessage('@empty without arguments must be inside @forelse on line 2.');
+        $this->expectExceptionMessage('bare @empty belongs to @forelse (line 2, column 1)');
         $this->renderString("x\n@empty y");
     }
 
