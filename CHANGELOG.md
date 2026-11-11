@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased] — 1.2.0
+## [1.2.0] — 2026-11-11
 
 ### Added
 - **Real syntax tree** — `Ast\TreeBuilder` nests block directives into `Ast\BlockNode` (branches: `@if`/`@elseif`/`@else`, `@forelse`/`@empty`, …) under an `Ast\Template`; `Template::walk()`; `Compiler::buildTree()` / `compileTree()`; `Engine::parseView()` for tooling. (#13)
