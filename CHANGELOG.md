@@ -6,6 +6,24 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased] — 1.2.0
+
+### Added
+- **Real syntax tree** — `Ast\TreeBuilder` nests block directives into `Ast\BlockNode` (branches: `@if`/`@elseif`/`@else`, `@forelse`/`@empty`, …) under an `Ast\Template`; `Template::walk()`; `Compiler::buildTree()` / `compileTree()`; `Engine::parseView()` for tooling. (#13)
+- **Compile-time validation** — unclosed, stray and crossed blocks; misplaced or duplicated `@else` / `@elseif` / `@empty`; directives missing required arguments. (#13)
+- **PHP linting at compile time** — syntax errors in `{{ }}`, `{!! !!}`, `@php` and directive arguments are reported with the template line and column instead of failing when the page is rendered. (#13)
+- Parser tokens carry a `column`; `TemplateSyntaxException` exposes `$view`, `$templateLine`, `$templateColumn`.
+- Hint for closers glued to text (`Title@endslotBody` → `@endslot Body`).
+
+### Changed
+- Structural errors that previously slipped through to runtime (e.g. an `@endslot` glued to the following word, leaving the slot open) are now compile errors with a precise message.
+- Error message wording for structure errors (now include column); `Compiler::validate()` delegates to the tree builder.
+- `Engine::VERSION` 1.2.0 — compiled caches are rebuilt.
+
+Validated against 177 real templates (skeleton, docs site, generated CRUD views, an application) with no false positives.
+
+---
+
 ## [1.1.0] — 2026-11-10
 
 ### Security

@@ -86,6 +86,7 @@ class Parser
             $before = $this->position;
             $node   = $this->parseNext();
             if ($node !== null) {
+                $node['column'] = $this->columnAt($before);
                 $nodes[] = $node;
             }
 
@@ -343,6 +344,15 @@ class Parser
      * Safety net: every parse iteration must consume input. A parser that
      * stalls would otherwise spin forever and take the worker down.
      */
+    /**
+     * 1-based column of a byte offset (bytes, not characters).
+     */
+    private function columnAt(int $offset): int
+    {
+        $lineStart = $offset === 0 ? false : strrpos($this->source, "\n", $offset - $this->length - 1);
+        return $offset - ($lineStart === false ? 0 : $lineStart + 1) + 1;
+    }
+
     private function assertProgress(int $before): void
     {
         if ($this->position <= $before) {

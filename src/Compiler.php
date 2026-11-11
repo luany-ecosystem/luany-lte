@@ -84,9 +84,28 @@ class Compiler
     }
 
     /**
-     * Compile-time balance check for @section/@endsection(@stop) and
-     * @push/@endpush, so a stray or mismatched closer is reported with its
-     * source line instead of corrupting output buffers at runtime.
+     * Build the syntax tree and validate it: block structure, branch
+     * placement, required arguments and the PHP syntax of embedded
+     * expressions. Directives registered with directive() are left as-is.
+     *
+     * @param array<int, array<string, mixed>> $ast Tokens from Parser::parse()
+     * @throws TemplateSyntaxException
+     */
+    public function buildTree(array $ast): Ast\Template
+    {
+        return (new Ast\TreeBuilder(fn (string $name): bool => isset($this->directives[$name])))->build($ast);
+    }
+
+    /**
+     * Compile a validated syntax tree.
+     */
+    public function compileTree(Ast\Template $template): string
+    {
+        return $this->compile($template->tokens());
+    }
+
+    /**
+     * Validate a token list (see buildTree()).
      *
      * Called by the Engine for complete templates; compile() itself does not
      * validate, so template fragments can still be compiled on their own.
@@ -96,47 +115,7 @@ class Compiler
      */
     public function validate(array $ast): void
     {
-        $closers = ['endsection' => 'section', 'stop' => 'section', 'endpush' => 'push'];
-        $open    = [];
-
-        foreach ($ast as $node) {
-            if (($node['type'] ?? null) !== 'directive' || isset($this->directives[$node['name']])) {
-                continue;
-            }
-
-            $name = $node['name'];
-            $line = isset($node['line']) ? " on line {$node['line']}" : '';
-
-            if ($name === 'section' || $name === 'push') {
-                $args = $node['args'];
-                if ($args === null || trim($args) === '' || ($name === 'section' && $this->hasInlineValue($args))) {
-                    continue; // inline section or no-op: not a block
-                }
-                $open[] = ['type' => $name, 'line' => $line];
-                continue;
-            }
-
-            if (isset($closers[$name])) {
-                $expected = $closers[$name];
-                $top      = end($open);
-
-                if ($top === false) {
-                    throw new TemplateSyntaxException("Unexpected @{$name}{$line}: no open @{$expected}.");
-                }
-                if ($top['type'] !== $expected) {
-                    throw new TemplateSyntaxException(
-                        "Unexpected @{$name}{$line}: @{$top['type']} opened{$top['line']} is still open."
-                    );
-                }
-                array_pop($open);
-            }
-        }
-
-        $top = end($open);
-        if ($top !== false) {
-            $closer = $top['type'] === 'section' ? '@endsection' : '@endpush';
-            throw new TemplateSyntaxException("Unclosed @{$top['type']} opened{$top['line']}: missing {$closer}.");
-        }
+        $this->buildTree($ast);
     }
 
     /**

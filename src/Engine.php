@@ -40,7 +40,7 @@ class Engine
      * Engine version. Part of the compiled-cache key, so upgrading LTE never
      * reuses templates compiled by an older compiler.
      */
-    public const VERSION = '1.1.0-dev';
+    public const VERSION = '1.2.0';
 
     private Parser   $parser;
     private Compiler $compiler;
@@ -214,6 +214,35 @@ class Engine
      * Resolve a dot-notation view name to an absolute filesystem path.
      * Tries .lte first, then .php for backward-compatibility.
      */
+    /**
+     * Parse and validate a view into its syntax tree without rendering it
+     * (for tooling: linters, editor integrations, `luany view:check`).
+     *
+     * @throws TemplateSyntaxException
+     * @throws \RuntimeException When the view does not exist
+     */
+    public function parseView(string $view): Ast\Template
+    {
+        $path = $this->findView($view);
+
+        if ($path === null) {
+            throw new \RuntimeException("View [{$view}] not found.");
+        }
+
+        try {
+            return $this->compiler->buildTree($this->parser->parse((string) file_get_contents($path)));
+        } catch (TemplateSyntaxException $e) {
+            throw new TemplateSyntaxException(
+                "In view [{$view}]: " . $e->getMessage(),
+                0,
+                $e,
+                $e->templateLine,
+                $e->templateColumn,
+                $view,
+            );
+        }
+    }
+
     public function findView(string $view): ?string
     {
         $path = str_replace('.', '/', $view);
@@ -361,16 +390,19 @@ class Engine
         $source = file_get_contents($viewPath);
 
         try {
-            $ast = $this->parser->parse($source);
-            $this->compiler->validate($ast);
-            $php = $this->compiler->compile($ast);
-        } catch (\Throwable $e) {
-            $class = $e instanceof TemplateSyntaxException ? TemplateSyntaxException::class : \RuntimeException::class;
-            throw new $class(
+            $tree = $this->compiler->buildTree($this->parser->parse($source));
+            $php  = $this->compiler->compileTree($tree);
+        } catch (TemplateSyntaxException $e) {
+            throw new TemplateSyntaxException(
                 "LTE compilation error in view [{$viewName}]: " . $e->getMessage(),
                 0,
-                $e
+                $e,
+                $e->templateLine,
+                $e->templateColumn,
+                $viewName,
             );
+        } catch (\Throwable $e) {
+            throw new \RuntimeException("LTE compilation error in view [{$viewName}]: " . $e->getMessage(), 0, $e);
         }
 
         $this->writeCompiled($viewPath, $cachedPath, $php);

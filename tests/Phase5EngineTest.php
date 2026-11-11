@@ -168,7 +168,7 @@ class Phase5EngineTest extends TestCase
         );
         $this->write('page.lte',
             '@component("components.card")' .
-            '@slot("title")Card Title@endslot' .
+            '@slot("title")Card Title@endslot ' .
             'Card body content.' .
             '@endcomponent'
         );
