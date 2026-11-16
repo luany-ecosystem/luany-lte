@@ -424,7 +424,7 @@ class Compiler
             // Component file (components/alert.lte):
             //   <div class="alert alert-{{ $type }}">
             //       <strong>{{ $title }}</strong>
-            //       <p>{{ $slot }}</p>
+            //       <p>{{ $slot }}</p>          (slots are HtmlString — not re-escaped)
             //   </div>
             //
             case 'component':

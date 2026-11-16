@@ -301,6 +301,21 @@ class EngineTest extends TestCase
         $this->assertStringContainsString('console.log("ready");', $out);
     }
 
+    public function test_script_module_and_async_options(): void
+    {
+        $this->write('layouts/js2.lte', '<body>@yield("c")@scripts</body>');
+        $this->write('pages/js2.lte',
+            '@extends("layouts.js2")'
+            . '@section("c")<p>x</p>@endsection'
+            . '@script(module)import "/a.js";@endscript'
+            . '@script(module, async)import "/b.js";@endscript'
+        );
+
+        $out = $this->render('pages.js2');
+        $this->assertStringContainsString('<script type="module">', $out);
+        $this->assertStringContainsString('<script type="module" async>', $out);
+    }
+
     // ── Stack directives (v0.2) ───────────────────────────────────────────────
 
     public function test_push_and_stack(): void

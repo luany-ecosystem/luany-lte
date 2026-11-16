@@ -21,4 +21,15 @@ final class HtmlString implements Htmlable, \Stringable
     {
         return $this->html;
     }
+
+    /** True when the HTML is empty or only whitespace, e.g. an unused slot. */
+    public function isEmpty(): bool
+    {
+        return trim($this->html) === '';
+    }
+
+    public function isNotEmpty(): bool
+    {
+        return !$this->isEmpty();
+    }
 }
