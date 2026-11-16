@@ -40,7 +40,7 @@ class Engine
      * Engine version. Part of the compiled-cache key, so upgrading LTE never
      * reuses templates compiled by an older compiler.
      */
-    public const VERSION = '1.2.0';
+    public const VERSION = '1.3.0';
 
     private Parser   $parser;
     private Compiler $compiler;
