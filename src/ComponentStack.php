@@ -12,8 +12,10 @@ namespace Luany\Lte;
  *     that is not inside a @slot block)
  *   - They support named slots (@slot('title') ... @endslot)
  *   - The component view receives all slots as PHP variables:
- *       $slot   → default slot content (string)
- *       $title  → named slot 'title' content (string)
+ *       $slot   → default slot content (HtmlString)
+ *       $title  → named slot 'title' content (HtmlString)
+ *     Slots are trusted, already-rendered HTML: {{ $slot }} prints them as-is.
+ *     Test for content with $slot->isEmpty() / ->isNotEmpty().
  *       + any explicit $data passed to @component
  *
  * Usage in a parent view:
@@ -195,8 +197,8 @@ class ComponentStack
         //   3. $slot → default slot content             (always present)
         $viewData = array_merge(
             $frame['data'],
-            $frame['slots'],
-            ['slot' => trim($frame['default'])],
+            array_map(fn (string $html): HtmlString => new HtmlString($html), $frame['slots']),
+            ['slot' => new HtmlString(trim($frame['default']))],
         );
 
         return $frame['engine']->render($frame['view'], $viewData);

@@ -66,6 +66,18 @@ class ComponentStackTest extends TestCase
         $this->assertSame('<b>hello</b>', $out);
     }
 
+    public function test_slots_are_html_strings_not_escaped_twice(): void
+    {
+        $this->write('card.lte', '<div>{{ $title }}|{{ $slot }}|@if($footer->isEmpty())no-footer@endif</div>');
+        $this->write('page.lte',
+            "@component('card')@slot('title')<h2>A &amp; B</h2>@endslot @slot('footer') @endslot <p>{{ \$x }}</p>@endcomponent"
+        );
+
+        $out = $this->engine->render('page', ['x' => '<b>']);
+
+        $this->assertSame('<div><h2>A &amp; B</h2>|<p>&lt;b&gt;</p>|no-footer</div>', $out);
+    }
+
     public function test_end_component_without_start_throws(): void
     {
         $this->expectException(\RuntimeException::class);

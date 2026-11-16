@@ -14,7 +14,8 @@ namespace Luany\Lte;
  *     .card { padding: 1rem; }
  *   @endstyle
  *
- *   @script(defer)                  — open inline script block (optional: defer)
+ *   @script(module)                 — open inline script block
+ *                                     (options: module, defer, async)
  *     document.querySelector('.card').addEventListener('click', fn);
  *   @endscript
  *
@@ -107,7 +108,10 @@ class AssetStack
     /**
      * Begin capturing an inline script block.
      *
-     * @param array<string, mixed> $options  Supported: ['defer']
+     * @param array<string, mixed> $options  'module' → type="module" (deferred, scoped);
+     *                                        'defer' / 'async' are emitted as attributes
+     *                                        (browsers apply them to inline scripts only
+     *                                        together with type="module").
      */
     public static function startScript(array $options = []): void
     {
@@ -172,11 +176,25 @@ class AssetStack
 
         $output = '';
         foreach (self::$scripts as $script) {
-            $defer = in_array('defer', $script['options']) ? ' defer' : '';
-            $output .= "<script{$defer}>\n{$script['content']}\n</script>\n";
+            $output .= '<script' . self::scriptAttributes($script['options']) . ">\n{$script['content']}\n</script>\n";
         }
 
         return $output;
+    }
+
+    /** @param array<int|string, mixed> $options */
+    private static function scriptAttributes(array $options): string
+    {
+        $attributes = '';
+        if (in_array('module', $options, true)) {
+            $attributes .= ' type="module"';
+        }
+        foreach (['defer', 'async'] as $flag) {
+            if (in_array($flag, $options, true)) {
+                $attributes .= ' ' . $flag;
+            }
+        }
+        return $attributes;
     }
 
     // ── Introspection (for testing) ───────────────────────────────────────────
