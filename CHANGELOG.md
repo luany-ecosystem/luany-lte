@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.3.1] — 2026-11-16
 
 ### Fixed
 - `Engine::VERSION` still said `1.2.0` in 1.3.0. It is part of the compiled-view cache key, so it now follows the releases (stamped on release, guarded by a test).
