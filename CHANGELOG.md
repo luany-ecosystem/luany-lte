@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.3.0] — 2026-11-16
 
 ### Changed
 - **Component slots are `HtmlString`** — `$slot` and named slots are trusted, already-rendered HTML, so `{{ $slot }}` now prints them as-is instead of escaping them a second time (`{!! $slot !!}` keeps working). Because an object is always truthy, test for content with `$slot->isEmpty()` / `->isNotEmpty()` (new on `HtmlString`) rather than `@if($slot)`.
