@@ -139,6 +139,15 @@ class AliasesTest extends TestCase
         }
     }
 
+    public function test_engine_parser_follows_the_syntax(): void
+    {
+        $engine = (new Engine(sys_get_temp_dir()))->setSyntax('pt');
+        $tokens = $engine->getParser()->parse('@se($a) x @fimse');
+
+        $this->assertSame('if', $tokens[0]['name']);
+        $this->assertSame('se', $tokens[0]['written']);
+    }
+
     public function test_unknown_syntax_is_rejected(): void
     {
         $this->expectException(\InvalidArgumentException::class);

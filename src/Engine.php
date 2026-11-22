@@ -204,6 +204,15 @@ class Engine
     }
 
     /**
+     * The parser, configured with the engine's syntax and directives
+     * (tools such as `luany view:check` parse files with it).
+     */
+    public function getParser(): Parser
+    {
+        return $this->parser;
+    }
+
+    /**
      * Clear all cached compiled views.
      */
     public function clearCache(): void
