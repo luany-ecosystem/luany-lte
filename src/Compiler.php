@@ -55,6 +55,8 @@ class Compiler
 
     /** @var array<string, callable> */
     private array $directives  = [];
+
+    private Aliases $aliases;
     private int   $forelseDepth = 0;
 
     /** @var list<array{flag: string, empty: bool}> */
@@ -62,6 +64,7 @@ class Compiler
 
     public function __construct()
     {
+        $this->aliases = Aliases::none();
         $this->registerDefaultDirectives();
     }
 
@@ -93,7 +96,7 @@ class Compiler
      */
     public function buildTree(array $ast): Ast\Template
     {
-        return (new Ast\TreeBuilder(fn (string $name): bool => isset($this->directives[$name])))->build($ast);
+        return (new Ast\TreeBuilder(fn (string $name): bool => isset($this->directives[$name]), true, $this->aliases))->build($ast);
     }
 
     /**
@@ -580,7 +583,13 @@ class Compiler
     {
         $names = array_keys($this->directives);
         sort($names);
-        return implode(',', $names);
+        return implode(',', $names) . ($this->aliases->isEmpty() ? '' : ';syntax=' . $this->aliases->syntax);
+    }
+
+    /** Aliases used in error messages (set by Engine::setSyntax()). */
+    public function setAliases(Aliases $aliases): void
+    {
+        $this->aliases = $aliases;
     }
 
     /**

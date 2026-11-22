@@ -27,8 +27,9 @@
 16. [JSON Output](#16-json-output)
 17. [Conditional Classes](#17-conditional-classes)
 18. [Custom Directives](#18-custom-directives)
-19. [Error Reporting](#19-error-reporting)
-20. [Changelog](#20-changelog)
+19. [Portuguese Directives](#19-portuguese-directives)
+20. [Error Reporting](#20-error-reporting)
+21. [Changelog](#21-changelog)
 
 ---
 
@@ -386,7 +387,53 @@ The handler receives the raw argument string (content inside the parentheses) an
 
 ---
 
-## 19. Error Reporting
+## 19. Portuguese Directives
+
+With the syntax set to `pt`, every structural directive also has a Portuguese name. It compiles to exactly the same PHP. English names keep working, and both can be mixed in one template.
+
+```php
+$engine->setSyntax('pt');   // Luany apps: 'syntax' => 'pt' in config/app.php (LUANY_SYNTAX)
+```
+
+```html
+@estende('layouts.main')
+
+@secao('conteudo')
+    @paracada($produtos as $produto)
+        @se($produto->ativo)
+            <li>{{ $produto->nome }}</li>
+        @senao
+            <li class="inativo">{{ $produto->nome }}</li>
+        @fimse
+    @fimparacada
+@fimsecao
+```
+
+| English | Portuguese | English | Portuguese |
+|---|---|---|---|
+| `@if` / `@endif` | `@se` / `@fimse` | `@extends` | `@estende` |
+| `@elseif` | `@senaose` | `@section` / `@endsection` | `@secao` / `@fimsecao` |
+| `@else` | `@senao` | `@yield` | `@exibir` |
+| `@unless` / `@endunless` | `@exceto` / `@fimexceto` | `@include` | `@incluir` |
+| `@isset` / `@endisset` | `@definido` / `@fimdefinido` | `@component` / `@endcomponent` | `@componente` / `@fimcomponente` |
+| `@ifempty` / `@endifempty` | `@sevazio` / `@fimsevazio` | `@method` | `@metodo` |
+| `@empty($x)` / `@endempty` | `@vazio($x)` / `@fimvazio` | `@auth` / `@endauth` | `@autenticado` / `@fimautenticado` |
+| `@foreach` / `@endforeach` | `@paracada` / `@fimparacada` | `@guest` / `@endguest` | `@visitante` / `@fimvisitante` |
+| `@forelse` … `@empty` / `@endforelse` | `@listar` … `@vazio` / `@fimlistar` | `@class` | `@classe` |
+| `@for` / `@endfor` | `@para` / `@fimpara` | | |
+| `@while` / `@endwhile` | `@enquanto` / `@fimenquanto` | | |
+
+- **Accented forms and spelling variants** are accepted: `@senão`, `@senãose`, `@método`, and `@seccao` / `@seção` / `@secção` for `@secao`.
+- **Lowercase only**, like the English directives: `@Se` is text.
+- **Technical names have no alias:** `@php`, `@csrf`, `@json`, `@style`, `@styles`, `@script`, `@scripts`, `@push`, `@stack`, `@slot`, `@dump`, `@dd`.
+- **Errors use the name you wrote:** `Unexpected @fimse: @paracada opened on line 12 is still open (expected @fimparacada)`.
+- **Custom directives win:** a directive registered as `se` keeps its meaning.
+- **Opt-in** because `@word` that is not a directive stays text; with `pt`, words such as `@se` or `@para` become directives.
+- The table is `resources/aliases.pt.json`; the syntax is part of the compiled-view cache key.
+
+---
+
+## 20. Error Reporting
 
 **Compilation errors** are found before the template runs and include the view
 name, line and column (`TemplateSyntaxException::$view`, `$templateLine`,
@@ -427,7 +474,7 @@ The Engine embeds `@lte:{N}` markers in compiled cache files and maps PHP runtim
 
 ---
 
-## 20. Changelog
+## 21. Changelog
 
 ### next/v1 — Phase 5: Completion
 

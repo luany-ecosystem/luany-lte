@@ -1,0 +1,304 @@
+{
+  "language": "pt",
+  "version": 1,
+  "entries": [
+    {
+      "id": "lte.if",
+      "kind": "directive",
+      "en": "if",
+      "pt": "se",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.endif",
+      "kind": "directive",
+      "en": "endif",
+      "pt": "fimse",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.elseif",
+      "kind": "directive",
+      "en": "elseif",
+      "pt": "senaose",
+      "variants": [
+        "senãose"
+      ],
+      "preferred": {
+        "pt_PT": "senãose",
+        "pt_AO": "senãose",
+        "pt_BR": "senãose"
+      }
+    },
+    {
+      "id": "lte.else",
+      "kind": "directive",
+      "en": "else",
+      "pt": "senao",
+      "variants": [
+        "senão"
+      ],
+      "preferred": {
+        "pt_PT": "senão",
+        "pt_AO": "senão",
+        "pt_BR": "senão"
+      }
+    },
+    {
+      "id": "lte.unless",
+      "kind": "directive",
+      "en": "unless",
+      "pt": "exceto",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.endunless",
+      "kind": "directive",
+      "en": "endunless",
+      "pt": "fimexceto",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.isset",
+      "kind": "directive",
+      "en": "isset",
+      "pt": "definido",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.endisset",
+      "kind": "directive",
+      "en": "endisset",
+      "pt": "fimdefinido",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.ifempty",
+      "kind": "directive",
+      "en": "ifempty",
+      "pt": "sevazio",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.endifempty",
+      "kind": "directive",
+      "en": "endifempty",
+      "pt": "fimsevazio",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.empty",
+      "kind": "directive",
+      "en": "empty",
+      "pt": "vazio",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.endempty",
+      "kind": "directive",
+      "en": "endempty",
+      "pt": "fimvazio",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.foreach",
+      "kind": "directive",
+      "en": "foreach",
+      "pt": "paracada",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.endforeach",
+      "kind": "directive",
+      "en": "endforeach",
+      "pt": "fimparacada",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.forelse",
+      "kind": "directive",
+      "en": "forelse",
+      "pt": "listar",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.endforelse",
+      "kind": "directive",
+      "en": "endforelse",
+      "pt": "fimlistar",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.for",
+      "kind": "directive",
+      "en": "for",
+      "pt": "para",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.endfor",
+      "kind": "directive",
+      "en": "endfor",
+      "pt": "fimpara",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.while",
+      "kind": "directive",
+      "en": "while",
+      "pt": "enquanto",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.endwhile",
+      "kind": "directive",
+      "en": "endwhile",
+      "pt": "fimenquanto",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.extends",
+      "kind": "directive",
+      "en": "extends",
+      "pt": "estende",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.section",
+      "kind": "directive",
+      "en": "section",
+      "pt": "secao",
+      "variants": [
+        "seccao",
+        "seção",
+        "secção"
+      ],
+      "preferred": {
+        "pt_PT": "secção",
+        "pt_AO": "secção",
+        "pt_BR": "seção"
+      }
+    },
+    {
+      "id": "lte.endsection",
+      "kind": "directive",
+      "en": "endsection",
+      "pt": "fimsecao",
+      "variants": [
+        "fimseccao",
+        "fimseção",
+        "fimsecção"
+      ],
+      "preferred": {
+        "pt_PT": "fimsecção",
+        "pt_AO": "fimsecção",
+        "pt_BR": "fimseção"
+      }
+    },
+    {
+      "id": "lte.yield",
+      "kind": "directive",
+      "en": "yield",
+      "pt": "exibir",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.include",
+      "kind": "directive",
+      "en": "include",
+      "pt": "incluir",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.component",
+      "kind": "directive",
+      "en": "component",
+      "pt": "componente",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.endcomponent",
+      "kind": "directive",
+      "en": "endcomponent",
+      "pt": "fimcomponente",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.method",
+      "kind": "directive",
+      "en": "method",
+      "pt": "metodo",
+      "variants": [
+        "método"
+      ],
+      "preferred": {
+        "pt_PT": "método",
+        "pt_AO": "método",
+        "pt_BR": "método"
+      }
+    },
+    {
+      "id": "lte.auth",
+      "kind": "directive",
+      "en": "auth",
+      "pt": "autenticado",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.endauth",
+      "kind": "directive",
+      "en": "endauth",
+      "pt": "fimautenticado",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.guest",
+      "kind": "directive",
+      "en": "guest",
+      "pt": "visitante",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.endguest",
+      "kind": "directive",
+      "en": "endguest",
+      "pt": "fimvisitante",
+      "variants": [],
+      "preferred": {}
+    },
+    {
+      "id": "lte.class",
+      "kind": "directive",
+      "en": "class",
+      "pt": "classe",
+      "variants": [],
+      "preferred": {}
+    }
+  ]
+}

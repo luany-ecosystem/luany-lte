@@ -6,6 +6,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Portuguese directives** ("Luany em Português", layer L1): `Engine::setSyntax('pt')` adds Portuguese names for the structural directives — `@se`/`@senao`/`@fimse`, `@paracada`/`@fimparacada`, `@listar`…`@vazio`/`@fimlistar`, `@secao`/`@fimsecao`, `@estende`, `@incluir`, `@componente`, `@autenticado`, `@visitante`, `@classe` and more. They compile to exactly the same PHP; English names keep working and can be mixed. Accented forms and spelling variants are accepted (`@senão`, `@seção`, `@secção`); aliases are lowercase only. Errors show the name as written (`expected @fimparacada`). Custom directives win over aliases. Table in `resources/aliases.pt.json` (`Aliases` class); the syntax is part of the compiled-view cache key. Default syntax `en` parses exactly as before.
+
+---
+
 ## [1.3.1] — 2026-11-16
 
 ### Fixed

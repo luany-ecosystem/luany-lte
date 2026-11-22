@@ -75,6 +75,22 @@ class Engine
     }
 
     /**
+     * Template syntax: "en" (default) or "pt", which adds the Portuguese
+     * directive aliases (`@se`, `@paracada`, `@fimse`, …). English names keep
+     * working in both. Part of the compiled-cache key.
+     *
+     * @throws \InvalidArgumentException unknown syntax
+     */
+    public function setSyntax(string $syntax): static
+    {
+        $aliases = Aliases::for($syntax);
+        $this->parser->setAliases($aliases);
+        $this->compiler->setAliases($aliases);
+
+        return $this;
+    }
+
+    /**
      * Render a view and return the final HTML string.
      *
      * @param string               $view  Dot-notation view name (e.g. 'pages.home')

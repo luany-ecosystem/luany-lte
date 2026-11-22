@@ -2,6 +2,7 @@
 
 namespace Luany\Lte\Ast;
 
+use Luany\Lte\Aliases;
 use Luany\Lte\ExpressionScanner;
 use Luany\Lte\TemplateSyntaxException;
 
@@ -61,17 +62,42 @@ final class TreeBuilder
 
     private bool $lint;
 
-    /** @var list<array{name: string, glued: string, line: int}> Closers glued to text, e.g. "@endslotCard" */
+    private Aliases $aliases;
+
+    /** @var list<array{name: string, written: string, glued: string, line: int}> Closers glued to text, e.g. "@endslotCard" */
     private array $glued = [];
 
     /**
      * @param (callable(string): bool)|null $isCustom True for directives registered by the app
      * @param bool                          $lint     Check embedded PHP syntax
      */
-    public function __construct(?callable $isCustom = null, bool $lint = true)
+    public function __construct(?callable $isCustom = null, bool $lint = true, ?Aliases $aliases = null)
     {
         $this->isCustom = $isCustom;
         $this->lint     = $lint;
+        $this->aliases  = $aliases ?? Aliases::none();
+    }
+
+    /** The directive as the author wrote it (`@fimse`, not `@endif`). */
+    private static function shown(TokenNode $node): string
+    {
+        return (string) ($node->token['written'] ?? $node->name());
+    }
+
+    /**
+     * Expected closers in the author's language: a block opened with an alias
+     * (`@paracada`) is told to close with the alias (`@fimparacada`).
+     *
+     * @param list<string> $closers
+     */
+    private function closersFor(BlockNode $block, array $closers): string
+    {
+        $aliased = isset($block->opening()->token['written']);
+
+        return '@' . implode(' or @', array_map(
+            fn (string $c): string => $aliased ? $this->aliases->canonical($c) : $c,
+            $closers
+        ));
     }
 
     /**
@@ -132,7 +158,7 @@ final class TreeBuilder
             $open    = $stack[array_key_last($stack)];
             $closers = self::BLOCKS[$open->name][0];
             throw $this->error(
-                "Unclosed @{$open->name}: missing @" . implode(' or @', $closers) . $this->gluedHint($closers) . '.',
+                'Unclosed @' . self::shown($open->opening()) . ': missing ' . $this->closersFor($open, $closers) . $this->gluedHint($closers) . '.',
                 $open->opening()
             );
         }
@@ -188,22 +214,24 @@ final class TreeBuilder
         $name = (string) $node->name();
         $top  = $stack === [] ? null : $stack[array_key_last($stack)];
 
+        $shown = self::shown($node);
+
         if ($top === null || !in_array($name, self::BLOCKS[$top->name][1], true)) {
-            $where = $top === null ? 'outside any block' : "inside @{$top->name} (line {$top->line})";
-            $hint  = $name === 'empty' ? ' — bare @empty belongs to @forelse' : '';
-            throw $this->error("Unexpected @{$name} {$where}{$hint}.", $node);
+            $where = $top === null ? 'outside any block' : 'inside @' . self::shown($top->opening()) . " (line {$top->line})";
+            $hint  = $name === 'empty' ? " — bare @{$shown} belongs to @" . (isset($node->token['written']) ? $this->aliases->canonical('forelse') : 'forelse') : '';
+            throw $this->error("Unexpected @{$shown} {$where}{$hint}.", $node);
         }
 
-        $last = (string) $top->branches[array_key_last($top->branches)]->directive->name();
+        $lastNode = $top->branches[array_key_last($top->branches)]->directive;
 
-        if ($last === 'else') {
-            throw $this->error("Unexpected @{$name}: @else (line {$top->branches[array_key_last($top->branches)]->directive->line}) must be the last branch of @{$top->name}.", $node);
+        if ($lastNode->name() === 'else') {
+            throw $this->error("Unexpected @{$shown}: @" . self::shown($lastNode) . " (line {$lastNode->line}) must be the last branch of @" . self::shown($top->opening()) . '.', $node);
         }
 
         if ($name === 'empty') {
             foreach ($top->branches as $branch) {
                 if ($branch->directive->name() === 'empty') {
-                    throw $this->error('Duplicate @empty in @forelse.', $node);
+                    throw $this->error("Duplicate @{$shown} in @" . self::shown($top->opening()) . '.', $node);
                 }
             }
         }
@@ -219,14 +247,16 @@ final class TreeBuilder
         $name = (string) $node->name();
         $top  = $stack === [] ? null : $stack[array_key_last($stack)];
 
+        $shown = self::shown($node);
+
         if ($top === null) {
-            throw $this->error("Unexpected @{$name}: there is no open block to close.", $node);
+            throw $this->error("Unexpected @{$shown}: there is no open block to close.", $node);
         }
 
         if (!in_array($name, self::BLOCKS[$top->name][0], true)) {
             throw $this->error(
-                "Unexpected @{$name}: @{$top->name} opened on line {$top->line} is still open (expected @"
-                . implode(' or @', self::BLOCKS[$top->name][0]) . ')' . $this->gluedHint(self::BLOCKS[$top->name][0]) . '.',
+                "Unexpected @{$shown}: @" . self::shown($top->opening()) . " opened on line {$top->line} is still open (expected "
+                . $this->closersFor($top, self::BLOCKS[$top->name][0]) . ')' . $this->gluedHint(self::BLOCKS[$top->name][0]) . '.',
                 $node
             );
         }
@@ -240,29 +270,38 @@ final class TreeBuilder
      * letters, so it is read as one unknown word ("endslotCard") and stays text.
      *
      * @param array<int, array<string, mixed>> $tokens
-     * @return list<array{name: string, glued: string, line: int}>
+     * @return list<array{name: string, written: string, glued: string, line: int}>
      */
     private function findGluedClosers(array $tokens): array
     {
-        $closers = [];
+        $closers = []; // written closer => English closer
         foreach (self::BLOCKS as [$names]) {
-            array_push($closers, ...$names);
+            foreach ($names as $closer) {
+                $closers[$closer] = $closer;
+            }
         }
-        usort($closers, fn (string $a, string $b) => strlen($b) <=> strlen($a));
+        foreach ($this->aliases->all() as $written => $english) {
+            if (in_array($english, $closers, true)) {
+                $closers[$written] = $english;
+            }
+        }
+        uksort($closers, fn (string $a, string $b) => strlen($b) <=> strlen($a));
+        $pattern = $this->aliases->isEmpty() ? '/@([A-Za-z_][A-Za-z0-9_]*)/' : '/@([\p{L}_][\p{L}\p{N}_]*)/u';
 
         $found = [];
         foreach ($tokens as $token) {
             if (($token['type'] ?? null) !== 'text' || !str_contains((string) $token['content'], '@')) {
                 continue;
             }
-            if (preg_match_all('/@([A-Za-z_][A-Za-z0-9_]*)/', (string) $token['content'], $m, PREG_OFFSET_CAPTURE) === false) {
+            if (preg_match_all($pattern, (string) $token['content'], $m, PREG_OFFSET_CAPTURE) === false) {
                 continue;
             }
             foreach ($m[1] as [$word, $offset]) {
-                foreach ($closers as $closer) {
+                foreach ($closers as $closer => $english) {
+                    $closer = (string) $closer;
                     if ($word !== $closer && str_starts_with($word, $closer)) {
                         $line    = (int) ($token['line'] ?? 0) + substr_count(substr((string) $token['content'], 0, $offset), "\n");
-                        $found[] = ['name' => $closer, 'glued' => '@' . $word, 'line' => $line];
+                        $found[] = ['name' => $english, 'written' => $closer, 'glued' => '@' . $word, 'line' => $line];
                         break;
                     }
                 }
@@ -279,9 +318,9 @@ final class TreeBuilder
     {
         foreach ($this->glued as $g) {
             if (in_array($g['name'], $closers, true)) {
-                $rest = substr($g['glued'], strlen($g['name']) + 1);
+                $rest = substr($g['glued'], strlen($g['written']) + 1);
                 return " — \"{$g['glued']}\" on line {$g['line']} is read as text: separate the directive from the text"
-                    . " (\"@{$g['name']} {$rest}\")";
+                    . " (\"@{$g['written']} {$rest}\")";
             }
         }
         return '';
@@ -330,7 +369,8 @@ final class TreeBuilder
 
         if (!$hasArgs) {
             if (in_array($name, self::NEEDS_ARGS, true)) {
-                throw $this->error("@{$name} requires arguments, e.g. @{$name}(…).", $node);
+                $shown = self::shown($node);
+                throw $this->error("@{$shown} requires arguments, e.g. @{$shown}(…).", $node);
             }
             return;
         }
@@ -346,7 +386,7 @@ final class TreeBuilder
             default                  => "__lte({$args});",
         };
 
-        $this->lintPhp($code, $node, "@{$name}");
+        $this->lintPhp($code, $node, '@' . self::shown($node));
     }
 
     private function lintPhp(string $code, TokenNode $node, string $where): void
