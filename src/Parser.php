@@ -38,6 +38,8 @@ class Parser
     /** @var \Closure(string): bool */
     private \Closure $isDirective;
 
+    private Aliases $aliases;
+
     private string $source;
     private int    $position = 0;
     private int    $length   = 0;
@@ -49,9 +51,32 @@ class Parser
      *        directive. Defaults to the built-in directive set; the Engine passes
      *        Compiler::isDirective() so custom directives are recognised too.
      */
-    public function __construct(?callable $isDirective = null)
+    public function __construct(?callable $isDirective = null, ?Aliases $aliases = null)
     {
         $this->setDirectiveResolver($isDirective);
+        $this->aliases = $aliases ?? Aliases::none();
+    }
+
+    /** Directive aliases (e.g. Portuguese: `@se` → `@if`). */
+    public function setAliases(Aliases $aliases): void
+    {
+        $this->aliases = $aliases;
+    }
+
+    /**
+     * The directive a written name stands for: the name itself when it is a
+     * directive (custom directives win over aliases), else the English
+     * directive it aliases. Null when it is not a directive.
+     */
+    private function resolve(string $name): ?string
+    {
+        if (($this->isDirective)($name)) {
+            return $name;
+        }
+
+        $english = $this->aliases->english($name);
+
+        return $english !== null && ($this->isDirective)($english) ? $english : null;
     }
 
     /**
@@ -185,14 +210,10 @@ class Parser
     {
         $startLine = $this->line;
 
-        // Read directive name: [a-zA-Z0-9_]+
-        $nameEnd = $this->position;
-        while ($nameEnd < $this->length &&
-               (ctype_alnum($this->source[$nameEnd]) || $this->source[$nameEnd] === '_')) {
-            $nameEnd++;
-        }
-
-        $name           = substr($this->source, $this->position, $nameEnd - $this->position);
+        // Read directive name: [a-zA-Z0-9_]+ (plus UTF-8 letters when aliases are on)
+        $nameEnd        = $this->scanWord($this->position);
+        $written        = substr($this->source, $this->position, $nameEnd - $this->position);
+        $name           = $this->resolve($written) ?? $written;
         $this->position = $nameEnd;
 
         // @php block (without parentheses) — consume raw content until @endphp
@@ -229,7 +250,12 @@ class Parser
             }
         }
 
-        return ['type' => 'directive', 'name' => $name, 'args' => $args, 'line' => $startLine];
+        $node = ['type' => 'directive', 'name' => $name, 'args' => $args, 'line' => $startLine];
+        if ($written !== $name) {
+            $node['written'] = $written; // error messages show what the author typed
+        }
+
+        return $node;
     }
 
     private function parseDirectiveArgs(int $startLine): string
@@ -370,7 +396,10 @@ class Parser
 
     private function isWordChar(string $char): bool
     {
-        return $char !== '' && (ctype_alnum($char) || $char === '_');
+        return $char !== '' && (ctype_alnum($char) || $char === '_'
+            // UTF-8 bytes (accented letters) only count when aliases are on,
+            // so plain English LTE parses exactly as before.
+            || (!$this->aliases->isEmpty() && ord($char) >= 0x80));
     }
 
     /** Return the offset just past the run of word characters starting at $pos. */
@@ -413,7 +442,10 @@ class Parser
             return null;
         }
 
-        $name = substr($this->source, $pos + 1, $nameEnd - $pos - 1);
+        $name = $this->resolve(substr($this->source, $pos + 1, $nameEnd - $pos - 1));
+        if ($name === null) {
+            return null;
+        }
 
         // After a word character only closing/branch directives are honoured, so
         // `Hello@endsection` keeps working while `dev@php.net` / `me@if.com` stay text.
@@ -421,7 +453,7 @@ class Parser
             return null;
         }
 
-        return ($this->isDirective)($name) ? 'directive' : null;
+        return 'directive';
     }
 
     /**
